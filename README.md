@@ -83,16 +83,19 @@ Alpha — the core dialect machinery works for simple `SELECT` / `INSERT` /
 the known gaps are called out below so you don't waste time debugging a
 missing feature:
 
-- **Table reflection** (`MetaData.reflect()`): not implemented. The ADBC
+- **Table reflection** (`MetaData.reflect()`): not implemented
+  ([#1](https://github.com/drls-io/sqlalchemy-adbc/issues/1)). The ADBC
   driver exposes table/column metadata via the Arrow-based `GetObjects`
   call, but this library doesn't yet wire that into SQLAlchemy's
   `Inspector` contract. PRs welcome.
-- **Alembic autogenerate**: follows from reflection — won't work until
-  reflection lands. `alembic upgrade` against already-written migrations
-  is fine (it's pure SQL).
+- **Alembic autogenerate**
+  ([#2](https://github.com/drls-io/sqlalchemy-adbc/issues/2)): follows
+  from reflection — won't work until #1 lands. `alembic upgrade`
+  against already-written migrations is fine (it's pure SQL).
 - **PostgreSQL-specific types** (JSONB, ARRAY, UUID, TSTZMULTIRANGE,
-  …): ADBC's Arrow-over-the-wire codec returns these as strings / lists
-  of primitives, not as SQLAlchemy's typed objects. If you need ORM-level
+  …) ([#3](https://github.com/drls-io/sqlalchemy-adbc/issues/3)):
+  ADBC's Arrow-over-the-wire codec returns these as strings / lists of
+  primitives, not as SQLAlchemy's typed objects. If you need ORM-level
   round-tripping of PG-specific types, use `psycopg2` until we add a
   type compiler.
 - **Query parameterization**: uses ADBC's native `$1`-style placeholders
