@@ -1,6 +1,8 @@
 # sqlalchemy-adbc
 
-[![PyPI](https://img.shields.io/pypi/v/sqlalchemy-adbc.svg)](https://pypi.org/project/sqlalchemy-adbc/)
+[![PyPI - Version](https://img.shields.io/pypi/v/sqlalchemy-adbc.svg?color=blue)](https://pypi.org/project/sqlalchemy-adbc/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/sqlalchemy-adbc.svg)](https://pypi.org/project/sqlalchemy-adbc/)
+[![CI](https://github.com/drls-io/sqlalchemy-adbc/actions/workflows/ci.yml/badge.svg)](https://github.com/drls-io/sqlalchemy-adbc/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 Generic [SQLAlchemy](https://www.sqlalchemy.org/) dialect for any
