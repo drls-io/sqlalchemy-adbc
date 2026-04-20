@@ -96,6 +96,28 @@ pytest
 ruff check src/ tests/
 ```
 
+## Releasing
+
+Publishing is automated via [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/)
+(OIDC, no API tokens). One-time setup on pypi.org: add a *pending publisher*
+for project `sqlalchemy-adbc`, owner `drls-io`, repository `sqlalchemy-adbc`,
+workflow `publish.yml`, environment `pypi`. Same for TestPyPI if you want
+dry-runs.
+
+Cutting a release:
+
+```bash
+# 1. Bump version in pyproject.toml
+# 2. Commit, tag, push
+git commit -am "chore: release v0.1.1"
+git tag v0.1.1
+git push && git push --tags
+```
+
+The `Publish to PyPI` workflow fires on the tag, builds sdist+wheel, and
+uploads to pypi.org. For TestPyPI dry-runs use `workflow_dispatch` with
+target `testpypi`.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
