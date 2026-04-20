@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sqlalchemy-adbc"
+version = "0.1.0"
+description = "Generic SQLAlchemy dialect for any ADBC driver (Flight SQL, PostgreSQL, SQLite, Snowflake, BigQuery)."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+authors = [{ name = "DRLS Contributors" }]
+keywords = ["sqlalchemy", "adbc", "arrow", "flight-sql", "dialect"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Database",
+]
+dependencies = [
+    "sqlalchemy>=2.0",
+    "adbc-driver-manager>=1.0",
+    # ADBC returns results as Arrow record batches; the driver-manager
+    # needs a PyArrow (or equivalent) backend installed to materialize
+    # them through DBAPI. Without it, `cursor.fetchall()` raises a
+    # ProgrammingError.
+    "pyarrow>=14.0",
+]
+
+[project.optional-dependencies]
+flightsql = ["adbc-driver-flightsql>=1.0"]
+postgresql = ["adbc-driver-postgresql>=1.0"]
+sqlite = ["adbc-driver-sqlite>=1.0"]
+snowflake = ["adbc-driver-snowflake>=1.0"]
+bigquery = ["adbc-driver-bigquery>=1.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "adbc-driver-sqlite>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/drls-io/sqlalchemy-adbc"
+Repository = "https://github.com/drls-io/sqlalchemy-adbc"
+Issues = "https://github.com/drls-io/sqlalchemy-adbc/issues"
+
+# SQLAlchemy discovers dialects via the `sqlalchemy.dialects` entry point
+# group. The name form is `<name>` or `<name>.<driver>` — the second is what
+# lets us write `adbc+flightsql://` etc.
+[project.entry-points."sqlalchemy.dialects"]
+"adbc" = "sqlalchemy_adbc.base:ADBCDialect"
+"adbc.flightsql" = "sqlalchemy_adbc.flightsql:ADBCFlightSQLDialect"
+"adbc.sqlite" = "sqlalchemy_adbc.sqlite:ADBCSQLiteDialect"
+"adbc.postgresql" = "sqlalchemy_adbc.postgresql:ADBCPostgreSQLDialect"
+"adbc.snowflake" = "sqlalchemy_adbc.snowflake:ADBCSnowflakeDialect"
+"adbc.bigquery" = "sqlalchemy_adbc.bigquery:ADBCBigQueryDialect"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sqlalchemy_adbc"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
