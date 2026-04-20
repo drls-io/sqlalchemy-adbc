@@ -29,11 +29,23 @@ class ADBCFlightSQLDialect(ADBCDialect):
     supports_statement_cache = True
 
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
-        query = dict(url.query)
+        # SQLAlchemy's URL.query is `immutabledict[str, str | tuple[str, ...]]`
+        # — repeated keys (``?h=a&h=b``) collapse to a tuple. Flatten to
+        # `dict[str, str]` so the ADBC driver always sees scalar values;
+        # for repeated keys we keep the last (typical shell + HTTP layer
+        # behavior) rather than silently dropping them.
+        query: dict[str, str] = {k: _scalar(v) for k, v in url.query.items()}
 
-        scheme = "grpc+tls" if _pop_bool(query, "tls", default=False) else "grpc"
+        # TLS defaults to ON — Flight SQL is typically exposed as a
+        # public service (e.g., flight-sql.drls.io), and a bearer token
+        # sent over plaintext gRPC is a credential leak. Local/dev
+        # setups on a plaintext listener can opt out with ``?tls=false``.
+        tls = _pop_bool(query, "tls", default=True)
+        scheme = "grpc+tls" if tls else "grpc"
         host = url.host or "localhost"
-        port = url.port or 443
+        # Flight SQL convention: 443 for TLS (matches HTTPS), 50051 for
+        # plaintext gRPC (the Arrow Flight default).
+        port = url.port or (443 if tls else 50051)
         uri = f"{scheme}://{host}:{port}"
 
         db_kwargs: dict[str, str] = {}
@@ -42,10 +54,10 @@ class ADBCFlightSQLDialect(ADBCDialect):
         # extra — tests and IDE tooling shouldn't have to pull the
         # flightsql wheel.
         try:
-            from adbc_driver_flightsql import DatabaseOptions  # type: ignore[import-not-found]
+            from adbc_driver_flightsql import DatabaseOptions
 
-            auth_key = DatabaseOptions.AUTHORIZATION_HEADER.value
-            header_prefix = DatabaseOptions.RPC_CALL_HEADER_PREFIX.value
+            auth_key: str = DatabaseOptions.AUTHORIZATION_HEADER.value
+            header_prefix: str = DatabaseOptions.RPC_CALL_HEADER_PREFIX.value
         except ImportError:  # pragma: no cover - hit only without extra
             auth_key = "adbc.flight.sql.authorization_header"
             header_prefix = "adbc.flight.sql.rpc.call_header."
@@ -72,8 +84,16 @@ class ADBCFlightSQLDialect(ADBCDialect):
         return [uri], {"db_kwargs": db_kwargs} if db_kwargs else {}
 
 
-def _pop_bool(d: dict[str, Any], key: str, *, default: bool) -> bool:
+def _scalar(v: str | tuple[str, ...]) -> str:
+    """Collapse a possibly-repeated URL query value to a single string.
+
+    SQLAlchemy gives us a tuple for ``?k=a&k=b`` (both values); we keep
+    the last, matching shell/HTTP conventions where the later value wins.
+    """
+    return v[-1] if isinstance(v, tuple) else v
+
+
+def _pop_bool(d: dict[str, str], key: str, *, default: bool) -> bool:
     if key not in d:
         return default
-    v = d.pop(key)
-    return str(v).lower() in {"1", "true", "yes", "on"}
+    return d.pop(key).lower() in {"1", "true", "yes", "on"}

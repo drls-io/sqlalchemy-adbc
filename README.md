@@ -79,11 +79,29 @@ df = pd.read_sql("SELECT 1 AS n", engine)
 ## Status
 
 Alpha — the core dialect machinery works for simple `SELECT` / `INSERT` /
-`CREATE TABLE` use. More advanced SQLAlchemy features (table reflection,
-dialect-specific types, DDL compilers per backend) are still to come. PRs
-welcome.
+`CREATE TABLE` use. More advanced SQLAlchemy features are still to come;
+the known gaps are called out below so you don't waste time debugging a
+missing feature:
 
-Ship tests: 11 passing against ADBC SQLite on Python 3.9–3.13.
+- **Table reflection** (`MetaData.reflect()`): not implemented. The ADBC
+  driver exposes table/column metadata via the Arrow-based `GetObjects`
+  call, but this library doesn't yet wire that into SQLAlchemy's
+  `Inspector` contract. PRs welcome.
+- **Alembic autogenerate**: follows from reflection — won't work until
+  reflection lands. `alembic upgrade` against already-written migrations
+  is fine (it's pure SQL).
+- **PostgreSQL-specific types** (JSONB, ARRAY, UUID, TSTZMULTIRANGE,
+  …): ADBC's Arrow-over-the-wire codec returns these as strings / lists
+  of primitives, not as SQLAlchemy's typed objects. If you need ORM-level
+  round-tripping of PG-specific types, use `psycopg2` until we add a
+  type compiler.
+- **Query parameterization**: uses ADBC's native `$1`-style placeholders
+  for PostgreSQL and `?` for SQLite. Flight SQL and Snowflake delegate
+  to the driver's default.
+
+PRs welcome.
+
+Tests: 52+ passing against ADBC SQLite + URL/DSN translators on Python 3.9–3.13.
 
 ## Development
 

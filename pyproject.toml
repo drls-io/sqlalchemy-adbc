@@ -70,6 +70,30 @@ target-version = "py39"
 select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["E501"]
 
+[tool.mypy]
+# Intentionally 3.10 (not 3.9) — mypy traverses third-party packages
+# via follow-imports, and pytest itself uses `match`/`case` syntax that
+# the 3.9 parser can't even tokenize. Our own source is still
+# 3.9-compatible; runtime compat is covered by the pytest matrix.
+python_version = "3.10"
+strict_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+follow_imports = "silent"
+
+# ADBC driver wheels don't ship type stubs; lazy imports in the dialect
+# modules guard on ImportError so we only pay the type-ignore cost here.
+[[tool.mypy.overrides]]
+module = [
+    "adbc_driver_manager.*",
+    "adbc_driver_flightsql.*",
+    "adbc_driver_postgresql.*",
+    "adbc_driver_sqlite.*",
+    "adbc_driver_snowflake.*",
+    "adbc_driver_bigquery.*",
+]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"

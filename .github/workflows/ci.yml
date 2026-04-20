@@ -24,6 +24,8 @@ jobs:
         run: ruff check src/ tests/
       - name: Ruff format
         run: ruff format --check src/ tests/
+      - name: Mypy
+        run: mypy src tests
 
   test:
     runs-on: ubuntu-latest

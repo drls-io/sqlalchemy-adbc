@@ -16,13 +16,31 @@ def _build(url_str: str):
     return ADBCFlightSQLDialect().build_connect_args(make_url(url_str))
 
 
-def test_plain_grpc():
-    args, kwargs = _build("adbc+flightsql://localhost:50051")
+def test_tls_is_default():
+    """No ``tls`` query param → scheme is grpc+tls (secure by default)."""
+    args, kwargs = _build("adbc+flightsql://flight-sql.example.com:443")
+    assert args == ["grpc+tls://flight-sql.example.com:443"]
+    assert "db_kwargs" not in kwargs
+
+
+def test_tls_explicit_opt_out():
+    """``?tls=false`` drops back to plaintext gRPC — needed for local dev."""
+    args, kwargs = _build("adbc+flightsql://localhost:50051?tls=false")
     assert args == ["grpc://localhost:50051"]
     assert "db_kwargs" not in kwargs
 
 
-def test_tls_scheme():
+def test_default_port_tls():
+    args, _ = _build("adbc+flightsql://flight-sql.example.com")
+    assert args == ["grpc+tls://flight-sql.example.com:443"]
+
+
+def test_default_port_plaintext():
+    args, _ = _build("adbc+flightsql://localhost?tls=false")
+    assert args == ["grpc://localhost:50051"]
+
+
+def test_tls_scheme_explicit():
     args, _ = _build("adbc+flightsql://flight-sql.example.com:443?tls=true")
     assert args == ["grpc+tls://flight-sql.example.com:443"]
 
