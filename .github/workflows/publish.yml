@@ -87,3 +87,57 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    # Creates a GitHub Release for every tag push, using the matching
+    # CHANGELOG.md section as the release body. Runs AFTER the PyPI
+    # publish succeeds so we don't advertise a version that failed
+    # to upload. No binary assets attached — PyPI is the distribution
+    # channel; duplicating wheels here invites drift.
+    name: Create GitHub Release
+    needs: publish-pypi
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          # Grab the section under `## [X.Y.Z]` up to the next `## `
+          # heading (or EOF). `awk` keeps this portable across bash
+          # versions without depending on gh's CHANGELOG conventions.
+          NOTES=$(awk -v ver="$TAG" '
+            /^## \[/ {
+              if (found) exit
+              if ($0 ~ "\\[" ver "\\]") { found = 1; next }
+            }
+            found { print }
+          ' CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            echo "::warning::No CHANGELOG entry found for version $TAG"
+            NOTES="Release v$TAG. See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
+          fi
+          # Append PyPI link so the Release page directs installers
+          # back to the canonical distribution.
+          NOTES="$NOTES
+
+          ---
+
+          📦 **Install:** \`pip install sqlalchemy-adbc==$TAG\` —
+          [view on PyPI](https://pypi.org/project/sqlalchemy-adbc/$TAG/)"
+          {
+            echo "notes<<EOF"
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          gh release create "v$TAG" \
+            --title "v$TAG" \
+            --notes "${{ steps.notes.outputs.notes }}"
