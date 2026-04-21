@@ -68,23 +68,57 @@ class ADBCPostgreSQLDialect(ADBCDialect):
 
     # ── Column reflection (PG-typed) ─────────────────────────────────
     #
-    # Override the base ``get_columns`` to pass ``pg_ischema_names``
-    # through to the type mapper, so JSONB/UUID/INET/etc. columns
-    # surface as their TypeDecorator wrappers (with JSON parsing /
-    # UUID instantiation) rather than plain Text.
+    # Query ``information_schema.columns`` directly rather than relying
+    # on ADBC's ``xdbc_type_name`` because the ADBC PG driver's GetObjects
+    # reports inconsistent type strings for PG-extension types (JSONB,
+    # UUID, INET, CIDR, MACADDR). ``udt_name`` is the canonical PG type
+    # identifier and always matches ``pg_type.typname`` — so we map
+    # that through ``pg_ischema_names`` and get reliable TypeDecorator
+    # round-trips (JSONB → dict, UUID → uuid.UUID, etc.).
+    #
+    # Follows the same pattern as ``get_indexes`` below (query pg_catalog
+    # directly for feature parity with psycopg2's dialect).
 
     def get_columns(
         self, connection: Any, table_name: str, schema: str | None = None, **kw: Any
     ) -> list[ReflectedColumn]:
         from sqlalchemy_adbc import reflection
 
-        tree = self._tree(connection, schema=schema, table_name=table_name)
-        tbl = reflection.find_table(tree, table_name, schema=schema)
-        if tbl is None:
+        dbapi = self._adbc_connection(connection)
+        cursor = dbapi.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT column_name, udt_name, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_name = $1
+                  AND ($2::text IS NULL OR table_schema = $2)
+                ORDER BY ordinal_position
+                """,
+                (table_name, schema),
+            )
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+
+        if not rows:
             return []
-        return reflection.columns_from_table(  # type: ignore[return-value]
-            tbl, ischema_names=pg_ischema_names
-        )
+
+        return [
+            {
+                "name": row[0],
+                "type": reflection.adbc_type_to_sqla(row[1], ischema_names=pg_ischema_names),
+                "nullable": str(row[2]).upper() != "NO",
+                "default": row[3],
+                # "auto" is the sentinel SQLAlchemy uses to mean "let
+                # the dialect infer"; TypedDict signature demands bool,
+                # but the real SA code path accepts "auto" and other
+                # string markers. Cast avoids the TypedDict noise.
+                "autoincrement": "auto",  # type: ignore[typeddict-item]
+                "comment": None,
+            }
+            for row in rows
+        ]
 
     # ── Index reflection ─────────────────────────────────────────────
     #

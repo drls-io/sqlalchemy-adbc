@@ -62,7 +62,13 @@ class JSON(JSONB):
     """``json`` is the non-indexed variant of ``jsonb`` in PG. From an
     application perspective they are interchangeable; only the
     storage/indexing profile differs. Sharing the decoder keeps
-    behavior consistent."""
+    behavior consistent.
+
+    SQLAlchemy requires ``cache_ok`` on every ``TypeDecorator``
+    subclass (the attribute does not inherit), so we redeclare it.
+    """
+
+    cache_ok = True
 
 
 class UUID(sa_types.TypeDecorator[Any]):
@@ -110,7 +116,13 @@ class INET(sa_types.TypeDecorator[Any]):
 
 
 class CIDR(INET):
-    """Network address in CIDR notation — same runtime shape as INET."""
+    """Network address in CIDR notation — same runtime shape as INET.
+
+    ``cache_ok`` must be redeclared (it doesn't inherit across
+    TypeDecorator subclasses).
+    """
+
+    cache_ok = True
 
 
 class MACADDR(sa_types.TypeDecorator[Any]):
