@@ -107,15 +107,16 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   …) and **hstore** — not yet mapped to typed decorators; returned
   as raw strings. JSONB / JSON / UUID / INET / CIDR / MACADDR /
   MACADDR8 all round-trip through typed decorators as of 0.3.0
-  ([#3](https://github.com/drls-io/sqlalchemy-adbc/issues/3) —
-  JSONB/UUID/INET portion closed)
+  ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
 - **Drivers exercised in CI** — SQLite fully, PostgreSQL
   integration-tested via service container. Snowflake / BigQuery /
   Flight SQL inherit the shared reflection path but have no
   per-driver CI
+  ([#12](https://github.com/drls-io/sqlalchemy-adbc/issues/12))
 - **ADBC SQLite NOT NULL reporting** — upstream driver always
   reports nullable=True; reflection faithfully reflects that
   (tracked, auto-reactivating xfail)
+  ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13))
 
 Tests: 106 passing on Python 3.10–3.13, including 17 PostgreSQL
 integration tests against a service-container Postgres.
