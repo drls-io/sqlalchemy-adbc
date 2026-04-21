@@ -12,10 +12,11 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
-from sqlalchemy.engine.interfaces import ReflectedIndex
+from sqlalchemy.engine.interfaces import ReflectedColumn, ReflectedIndex
 from sqlalchemy.engine.url import URL
 
 from sqlalchemy_adbc.base import ADBCDialect
+from sqlalchemy_adbc.postgresql_types import pg_ischema_names
 
 
 class ADBCPostgreSQLDialect(ADBCDialect):
@@ -48,6 +49,26 @@ class ADBCPostgreSQLDialect(ADBCDialect):
         if url.query:
             kwargs["db_kwargs"] = dict(url.query)
         return [uri], kwargs
+
+    # ── Column reflection (PG-typed) ─────────────────────────────────
+    #
+    # Override the base ``get_columns`` to pass ``pg_ischema_names``
+    # through to the type mapper, so JSONB/UUID/INET/etc. columns
+    # surface as their TypeDecorator wrappers (with JSON parsing /
+    # UUID instantiation) rather than plain Text.
+
+    def get_columns(
+        self, connection: Any, table_name: str, schema: str | None = None, **kw: Any
+    ) -> list[ReflectedColumn]:
+        from sqlalchemy_adbc import reflection
+
+        tree = self._tree(connection, schema=schema, table_name=table_name)
+        tbl = reflection.find_table(tree, table_name, schema=schema)
+        if tbl is None:
+            return []
+        return reflection.columns_from_table(  # type: ignore[return-value]
+            tbl, ischema_names=pg_ischema_names
+        )
 
     # ── Index reflection ─────────────────────────────────────────────
     #

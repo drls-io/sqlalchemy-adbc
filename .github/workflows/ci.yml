@@ -33,12 +33,31 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    # Postgres service for integration tests (test_postgresql_types.py,
+    # issue #3). Gated by DRLS_PG_URL — tests skip when the env var is
+    # absent, so local `pytest` runs without a local PG also pass.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DRLS_PG_URL: "adbc+postgresql://test:test@localhost:5432/test"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,postgresql]"
       - name: Pytest
         run: pytest tests/ --cov=sqlalchemy_adbc --cov-report=term-missing
