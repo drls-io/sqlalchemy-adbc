@@ -29,18 +29,19 @@ class ADBCPostgreSQLDialect(ADBCDialect):
     supports_statement_cache = True
 
     # adbc_driver_postgresql binds parameters positionally via libpq's
-    # native ``$1, $2, ...`` placeholders. SQLAlchemy's DefaultDialect
-    # would otherwise copy ``paramstyle`` from ``dbapi.paramstyle``
-    # (adbc's module-level default), which triggers named binds via
-    # ADBC's ``adbc.statement.bind_by_name`` option — libpq rejects
-    # that with NOT_IMPLEMENTED. Class-level ``paramstyle = "numeric"``
-    # is NOT enough because ``DefaultDialect.__init__`` clobbers it;
-    # we have to force it through the kwarg so SQLAlchemy emits
-    # ``$1``-style placeholders and packs parameters positionally.
-    paramstyle = "numeric"
+    # native ``$1, $2, ...`` placeholders. Two SQLAlchemy paramstyles
+    # are positional — ``numeric`` emits ``:1, :2, ...`` which PG's
+    # parser rejects (``syntax error at or near ":"``), and
+    # ``numeric_dollar`` emits the ``$1, $2, ...`` form libpq actually
+    # speaks. We need the dollar variant.
+    #
+    # The class-level attribute is NOT enough because
+    # ``DefaultDialect.__init__`` clobbers it from ``dbapi.paramstyle``
+    # (``qmark`` at adbc module level) unless we force the kwarg.
+    paramstyle = "numeric_dollar"
 
     def __init__(self, **kwargs: Any) -> None:
-        kwargs.setdefault("paramstyle", "numeric")
+        kwargs.setdefault("paramstyle", "numeric_dollar")
         super().__init__(**kwargs)
 
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
