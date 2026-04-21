@@ -28,6 +28,21 @@ class ADBCPostgreSQLDialect(ADBCDialect):
     driver_module = "adbc_driver_postgresql.dbapi"
     supports_statement_cache = True
 
+    # adbc_driver_postgresql binds parameters positionally via libpq's
+    # native ``$1, $2, ...`` placeholders. SQLAlchemy's DefaultDialect
+    # would otherwise copy ``paramstyle`` from ``dbapi.paramstyle``
+    # (adbc's module-level default), which triggers named binds via
+    # ADBC's ``adbc.statement.bind_by_name`` option — libpq rejects
+    # that with NOT_IMPLEMENTED. Class-level ``paramstyle = "numeric"``
+    # is NOT enough because ``DefaultDialect.__init__`` clobbers it;
+    # we have to force it through the kwarg so SQLAlchemy emits
+    # ``$1``-style placeholders and packs parameters positionally.
+    paramstyle = "numeric"
+
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("paramstyle", "numeric")
+        super().__init__(**kwargs)
+
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
         # SQLAlchemy's URL parser decodes percent-escapes in userinfo
         # (`url.username`, `url.password`) but leaves the path component
