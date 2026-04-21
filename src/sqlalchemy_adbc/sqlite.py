@@ -11,8 +11,10 @@ from sqlalchemy_adbc.base import ADBCDialect
 
 
 class ADBCSQLiteDialect(ADBCDialect):
-    name = "adbc"
-    driver = "sqlite"
+    # `name = "sqlite"` makes Alembic pick the standard SQLite DDL impl
+    # — we speak SQLite wire compat via ADBC, so that's correct.
+    name = "sqlite"
+    driver = "adbc"
     driver_module = "adbc_driver_sqlite.dbapi"
     supports_statement_cache = True
 

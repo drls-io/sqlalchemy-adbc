@@ -41,6 +41,10 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.10",
     "adbc-driver-sqlite>=1.0",
+    # Alembic autogenerate tests (test_alembic_autogenerate.py) rely on
+    # the Inspector contract we implemented in #1 — pinning the dev
+    # pin ensures CI exercises that integration path.
+    "alembic>=1.13",
 ]
 
 [project.urls]

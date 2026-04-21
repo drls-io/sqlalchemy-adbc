@@ -21,8 +21,8 @@ from sqlalchemy_adbc.base import ADBCDialect
 
 
 class ADBCSnowflakeDialect(ADBCDialect):
-    name = "adbc"
-    driver = "snowflake"
+    name = "snowflake"
+    driver = "adbc"
     driver_module = "adbc_driver_snowflake.dbapi"
     supports_statement_cache = True
 

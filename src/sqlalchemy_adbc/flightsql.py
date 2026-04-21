@@ -23,8 +23,11 @@ from sqlalchemy_adbc.base import ADBCDialect
 
 
 class ADBCFlightSQLDialect(ADBCDialect):
-    name = "adbc"
-    driver = "flightsql"
+    # Flight SQL has no standard Alembic impl (it's a protocol, not a
+    # backend); Alembic will fall back to DefaultImpl, which emits
+    # ANSI SQL DDL. Good enough for most Flight SQL servers.
+    name = "flightsql"
+    driver = "adbc"
     driver_module = "adbc_driver_flightsql.dbapi"
     supports_statement_cache = True
 
