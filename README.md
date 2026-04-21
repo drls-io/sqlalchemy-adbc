@@ -103,19 +103,22 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
 
 ### Known limitations
 
-- **PostgreSQL-specific types** (JSONB, UUID, INET, ranges) — in
-  flight ([#3](https://github.com/drls-io/sqlalchemy-adbc/issues/3),
-  [#8](https://github.com/drls-io/sqlalchemy-adbc/pull/8)); current
-  release returns them as raw strings
+- **PostgreSQL range types** (tstzrange, tstzmultirange, int4range,
+  …) and **hstore** — not yet mapped to typed decorators; returned
+  as raw strings. JSONB / JSON / UUID / INET / CIDR / MACADDR /
+  MACADDR8 all round-trip through typed decorators as of 0.3.0
+  ([#3](https://github.com/drls-io/sqlalchemy-adbc/issues/3) —
+  JSONB/UUID/INET portion closed)
 - **Drivers exercised in CI** — SQLite fully, PostgreSQL
-  integration-tested. Snowflake/BigQuery/Flight SQL inherit the
-  shared reflection path but have no per-driver CI
+  integration-tested via service container. Snowflake / BigQuery /
+  Flight SQL inherit the shared reflection path but have no
+  per-driver CI
 - **ADBC SQLite NOT NULL reporting** — upstream driver always
   reports nullable=True; reflection faithfully reflects that
   (tracked, auto-reactivating xfail)
 
-Tests: 89+ passing on Python 3.9–3.13, plus 18 integration tests
-gated on a running Postgres.
+Tests: 106 passing on Python 3.10–3.13, including 17 PostgreSQL
+integration tests against a service-container Postgres.
 
 ## Development
 
