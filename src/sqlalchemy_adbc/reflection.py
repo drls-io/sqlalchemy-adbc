@@ -65,13 +65,29 @@ _TYPE_MAP: dict[str, type[sa_types.TypeEngine[Any]]] = {
 }
 
 
-def adbc_type_to_sqla(type_name: str | None) -> sa_types.TypeEngine[Any]:
-    """Map an ADBC ``xdbc_type_name`` to a SQLAlchemy type instance."""
+def adbc_type_to_sqla(
+    type_name: str | None,
+    *,
+    ischema_names: dict[str, type[sa_types.TypeEngine[Any]]] | None = None,
+) -> sa_types.TypeEngine[Any]:
+    """Map an ADBC ``xdbc_type_name`` to a SQLAlchemy type instance.
+
+    ``ischema_names`` is an optional per-dialect type registry merged
+    on top of the generic map — Postgres passes its ``pg_ischema_names``
+    so JSONB/UUID/etc. reflect to typed decorators rather than falling
+    through to Text/String.
+    """
     if not type_name:
         return sa_types.NullType()
     normalized = type_name.strip().upper()
     # Strip trailing length/precision (e.g. ``VARCHAR(32)`` → ``VARCHAR``).
     base = normalized.split("(", 1)[0].strip()
+    # Dialect-specific overrides win over the generic map — this is how
+    # JSONB reflects to our TypeDecorator instead of plain Text.
+    if ischema_names is not None:
+        dialect_cls = ischema_names.get(base) or ischema_names.get(normalized)
+        if dialect_cls is not None:
+            return dialect_cls()
     cls = _TYPE_MAP.get(base) or _TYPE_MAP.get(normalized)
     if cls is None:
         return sa_types.NullType()
@@ -133,11 +149,18 @@ def find_table(
 # ── Projections for the Inspector contract ───────────────────────────
 
 
-def columns_from_table(tbl: dict[str, Any]) -> list[dict[str, Any]]:
+def columns_from_table(
+    tbl: dict[str, Any],
+    *,
+    ischema_names: dict[str, type[sa_types.TypeEngine[Any]]] | None = None,
+) -> list[dict[str, Any]]:
     """Project ADBC table_columns → SQLAlchemy ``get_columns`` shape.
 
     SQLAlchemy's contract: each dict has ``name``, ``type``, ``nullable``,
     ``default``, ``autoincrement``, and (optionally) ``comment``.
+
+    ``ischema_names`` is forwarded to :func:`adbc_type_to_sqla` so
+    dialect-specific types (JSONB, UUID, ...) reflect correctly.
     """
     out: list[dict[str, Any]] = []
     for col in tbl.get("table_columns") or []:
@@ -158,7 +181,7 @@ def columns_from_table(tbl: dict[str, Any]) -> list[dict[str, Any]]:
         out.append(
             {
                 "name": name,
-                "type": adbc_type_to_sqla(col.get("xdbc_type_name")),
+                "type": adbc_type_to_sqla(col.get("xdbc_type_name"), ischema_names=ischema_names),
                 "nullable": nullable,
                 "default": col.get("xdbc_column_def"),
                 "autoincrement": bool(col.get("xdbc_is_autoincrement")) or "auto",

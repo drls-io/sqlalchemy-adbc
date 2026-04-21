@@ -12,10 +12,11 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
-from sqlalchemy.engine.interfaces import ReflectedIndex
+from sqlalchemy.engine.interfaces import ReflectedColumn, ReflectedIndex
 from sqlalchemy.engine.url import URL
 
 from sqlalchemy_adbc.base import ADBCDialect
+from sqlalchemy_adbc.postgresql_types import pg_ischema_names
 
 
 class ADBCPostgreSQLDialect(ADBCDialect):
@@ -26,6 +27,22 @@ class ADBCPostgreSQLDialect(ADBCDialect):
     driver = "adbc"
     driver_module = "adbc_driver_postgresql.dbapi"
     supports_statement_cache = True
+
+    # adbc_driver_postgresql binds parameters positionally via libpq's
+    # native ``$1, $2, ...`` placeholders. Two SQLAlchemy paramstyles
+    # are positional — ``numeric`` emits ``:1, :2, ...`` which PG's
+    # parser rejects (``syntax error at or near ":"``), and
+    # ``numeric_dollar`` emits the ``$1, $2, ...`` form libpq actually
+    # speaks. We need the dollar variant.
+    #
+    # The class-level attribute is NOT enough because
+    # ``DefaultDialect.__init__`` clobbers it from ``dbapi.paramstyle``
+    # (``qmark`` at adbc module level) unless we force the kwarg.
+    paramstyle = "numeric_dollar"
+
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("paramstyle", "numeric_dollar")
+        super().__init__(**kwargs)
 
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
         # SQLAlchemy's URL parser decodes percent-escapes in userinfo
@@ -48,6 +65,60 @@ class ADBCPostgreSQLDialect(ADBCDialect):
         if url.query:
             kwargs["db_kwargs"] = dict(url.query)
         return [uri], kwargs
+
+    # ── Column reflection (PG-typed) ─────────────────────────────────
+    #
+    # Query ``information_schema.columns`` directly rather than relying
+    # on ADBC's ``xdbc_type_name`` because the ADBC PG driver's GetObjects
+    # reports inconsistent type strings for PG-extension types (JSONB,
+    # UUID, INET, CIDR, MACADDR). ``udt_name`` is the canonical PG type
+    # identifier and always matches ``pg_type.typname`` — so we map
+    # that through ``pg_ischema_names`` and get reliable TypeDecorator
+    # round-trips (JSONB → dict, UUID → uuid.UUID, etc.).
+    #
+    # Follows the same pattern as ``get_indexes`` below (query pg_catalog
+    # directly for feature parity with psycopg2's dialect).
+
+    def get_columns(
+        self, connection: Any, table_name: str, schema: str | None = None, **kw: Any
+    ) -> list[ReflectedColumn]:
+        from sqlalchemy_adbc import reflection
+
+        dbapi = self._adbc_connection(connection)
+        cursor = dbapi.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT column_name, udt_name, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_name = $1
+                  AND ($2::text IS NULL OR table_schema = $2)
+                ORDER BY ordinal_position
+                """,
+                (table_name, schema),
+            )
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+
+        if not rows:
+            return []
+
+        return [
+            {
+                "name": row[0],
+                "type": reflection.adbc_type_to_sqla(row[1], ischema_names=pg_ischema_names),
+                "nullable": str(row[2]).upper() != "NO",
+                "default": row[3],
+                # "auto" is the sentinel SQLAlchemy uses to mean "let
+                # the dialect infer"; TypedDict signature demands bool,
+                # but the real SA code path accepts "auto" and other
+                # string markers. Cast avoids the TypedDict noise.
+                "autoincrement": "auto",  # type: ignore[typeddict-item]
+                "comment": None,
+            }
+            for row in rows
+        ]
 
     # ── Index reflection ─────────────────────────────────────────────
     #

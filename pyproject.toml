@@ -8,15 +8,19 @@ version = "0.3.0"
 description = "Generic SQLAlchemy dialect for any ADBC driver (Flight SQL, PostgreSQL, SQLite, Snowflake, BigQuery)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "DRLS Contributors" }]
 keywords = ["sqlalchemy", "adbc", "arrow", "flight-sql", "dialect"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Database",
 ]
 dependencies = [
@@ -68,7 +72,7 @@ packages = ["src/sqlalchemy_adbc"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
