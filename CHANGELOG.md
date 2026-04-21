@@ -6,20 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### In flight
-
-- **PG-specific type decorators** (JSONB, UUID, INET, CIDR, MACADDR)
-  on PR [#8](https://github.com/drls-io/sqlalchemy-adbc/pull/8),
-  closes [#3](https://github.com/drls-io/sqlalchemy-adbc/issues/3).
-  Blocked on a `paramstyle` fix — the default `qmark` binds don't
-  work against `adbc_driver_postgresql` (which needs `numeric`
-  `$1`-style).
-
 ## [0.3.0] — 2026-04-21
 
-Largest release so far: table reflection, Alembic autogenerate, and
-a breaking fix to SQLAlchemy dialect naming conventions. Not backwards-
-compatible for callers that read `engine.dialect.name`.
+Largest release so far: table reflection, Alembic autogenerate,
+PostgreSQL type decorators, and breaking fixes to dialect naming
+and Python version support. Not backwards-compatible for callers
+that read `engine.dialect.name` or run on Python 3.9.
 
 ### Added
 
@@ -45,6 +37,20 @@ compatible for callers that read `engine.dialect.name`.
   idempotency (apply autogenerate output → re-run → no-op).
   ([#7](https://github.com/drls-io/sqlalchemy-adbc/pull/7),
   closes [#2](https://github.com/drls-io/sqlalchemy-adbc/issues/2))
+- **PostgreSQL type decorators** — `JSONB`, `JSON`, `UUID`, `INET`,
+  `CIDR`, `MACADDR`, `MACADDR8`. Round-trip PG-specific types
+  through ADBC as the Python objects SQLAlchemy users expect:
+  JSONB → dict/list, UUID → `uuid.UUID` (or `str` with
+  `as_uuid=False`), INET/CIDR/MAC as strings. PG column reflection
+  now queries `information_schema.columns.udt_name` directly
+  (ADBC's `xdbc_type_name` is unreliable for PG-extension types),
+  so `MetaData.reflect()` surfaces these as TypeDecorators, not
+  `NullType`. ([#8](https://github.com/drls-io/sqlalchemy-adbc/pull/8),
+  closes [#3](https://github.com/drls-io/sqlalchemy-adbc/issues/3))
+- **CI Postgres service** — integration tests (`test_postgresql_types.py`)
+  now run against a real `postgres:16` container, gated by
+  `DRLS_PG_URL`. Local `pytest` runs without Postgres continue to
+  skip these cleanly.
 
 ### Changed
 
@@ -55,13 +61,31 @@ compatible for callers that read `engine.dialect.name`.
   reported `name="adbc"`, which caused Alembic's DDL-impl lookup
   to `KeyError`. URL forms (`adbc+sqlite://`, etc.) are unchanged.
   Callers inspecting `engine.dialect.name` must update expectations.
+- **BREAKING — dropped Python 3.9.** Python 3.9 reached end-of-life
+  in October 2025. `requires-python` is now `>=3.10`; the CI matrix
+  covers 3.10–3.13.
+- **Development Status classifier: Alpha → Beta.** Matches the
+  README's scope statement — core functionality is stable enough
+  for real use, but a few months of external feedback still needed
+  before 1.0.
 
 ### Fixed
 
+- **PG `paramstyle` — `numeric_dollar`.** Forces SQLAlchemy to emit
+  `$1, $2, ...` (libpq's native wire form) instead of `:name` binds
+  via ADBC's `adbc.statement.bind_by_name` (which libpq rejects
+  with `NOT_IMPLEMENTED`) or `:1, :2, ...` (which PG's parser
+  rejects with `syntax error at or near ":"`). Set via
+  `__init__(kwargs.setdefault(...))` because `DefaultDialect.__init__`
+  clobbers the class-level attribute from `dbapi.paramstyle`.
 - `get_columns` now honors SQLAlchemy's `ReflectedColumn` shape
   ([#5](https://github.com/drls-io/sqlalchemy-adbc/pull/5))
 - Mypy is gated in CI with proper `sqlalchemy.engine.interfaces`
   return types
+- `cache_ok = True` declared explicitly on `JSON` and `CIDR`
+  subclasses — the attribute does not inherit across `TypeDecorator`
+  subclasses, so the absence silenced statement caching and
+  emitted SAWarning on every engine.
 
 ## [0.2.0] — 2026-04-19
 
