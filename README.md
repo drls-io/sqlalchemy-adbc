@@ -78,33 +78,44 @@ df = pd.read_sql("SELECT 1 AS n", engine)
 
 ## Status
 
-Alpha — the core dialect machinery works for simple `SELECT` / `INSERT` /
-`CREATE TABLE` use. More advanced SQLAlchemy features are still to come;
-the known gaps are called out below so you don't waste time debugging a
-missing feature:
+**Beta.** Core dialect + reflection + Alembic autogenerate work on
+the ADBC drivers we exercise in CI (SQLite end-to-end, PostgreSQL
+via service container). Not 1.0 yet — we want a few months of
+real-world use and at least one release without breaking changes
+before committing to a stable API.
 
-- **Table reflection** (`MetaData.reflect()`): not implemented
-  ([#1](https://github.com/drls-io/sqlalchemy-adbc/issues/1)). The ADBC
-  driver exposes table/column metadata via the Arrow-based `GetObjects`
-  call, but this library doesn't yet wire that into SQLAlchemy's
-  `Inspector` contract. PRs welcome.
-- **Alembic autogenerate**
-  ([#2](https://github.com/drls-io/sqlalchemy-adbc/issues/2)): follows
-  from reflection — won't work until #1 lands. `alembic upgrade`
-  against already-written migrations is fine (it's pure SQL).
-- **PostgreSQL-specific types** (JSONB, ARRAY, UUID, TSTZMULTIRANGE,
-  …) ([#3](https://github.com/drls-io/sqlalchemy-adbc/issues/3)):
-  ADBC's Arrow-over-the-wire codec returns these as strings / lists of
-  primitives, not as SQLAlchemy's typed objects. If you need ORM-level
-  round-tripping of PG-specific types, use `psycopg2` until we add a
-  type compiler.
-- **Query parameterization**: uses ADBC's native `$1`-style placeholders
-  for PostgreSQL and `?` for SQLite. Flight SQL and Snowflake delegate
-  to the driver's default.
+Full history in [CHANGELOG.md](CHANGELOG.md). Download tags on
+[GitHub Releases](https://github.com/drls-io/sqlalchemy-adbc/releases);
+published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
 
-PRs welcome.
+### What works
 
-Tests: 52+ passing against ADBC SQLite + URL/DSN translators on Python 3.9–3.13.
+- `SELECT` / `INSERT` / `CREATE TABLE` / `DROP TABLE` / `ALTER TABLE`
+  for every advertised driver
+- `MetaData.reflect(bind=engine)` — full Inspector contract backed
+  by ADBC `GetObjects`, including columns, PK, FK, unique
+  constraints, indexes (native PRAGMA / `pg_catalog` queries on
+  SQLite and PG)
+- Alembic `autogenerate` — end-to-end, reusing SQLAlchemy's native
+  backend DDL impls via standard dialect-name lookup
+- URL forms for Flight SQL, PostgreSQL, SQLite, Snowflake, BigQuery
+  with correct special-character escaping in passwords
+
+### Known limitations
+
+- **PostgreSQL-specific types** (JSONB, UUID, INET, ranges) — in
+  flight ([#3](https://github.com/drls-io/sqlalchemy-adbc/issues/3),
+  [#8](https://github.com/drls-io/sqlalchemy-adbc/pull/8)); current
+  release returns them as raw strings
+- **Drivers exercised in CI** — SQLite fully, PostgreSQL
+  integration-tested. Snowflake/BigQuery/Flight SQL inherit the
+  shared reflection path but have no per-driver CI
+- **ADBC SQLite NOT NULL reporting** — upstream driver always
+  reports nullable=True; reflection faithfully reflects that
+  (tracked, auto-reactivating xfail)
+
+Tests: 89+ passing on Python 3.9–3.13, plus 18 integration tests
+gated on a running Postgres.
 
 ## Development
 
