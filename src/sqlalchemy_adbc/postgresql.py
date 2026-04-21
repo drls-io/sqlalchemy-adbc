@@ -18,8 +18,11 @@ from sqlalchemy_adbc.base import ADBCDialect
 
 
 class ADBCPostgreSQLDialect(ADBCDialect):
-    name = "adbc"
-    driver = "postgresql"
+    # `name = "postgresql"` makes Alembic pick the standard Postgres
+    # DDL impl (alembic.ddl.postgresql.PostgresqlImpl). Needed because
+    # Alembic looks up DDL dialects by `.name`.
+    name = "postgresql"
+    driver = "adbc"
     driver_module = "adbc_driver_postgresql.dbapi"
     supports_statement_cache = True
 

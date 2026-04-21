@@ -18,8 +18,8 @@ from sqlalchemy_adbc.base import ADBCDialect
 
 
 class ADBCBigQueryDialect(ADBCDialect):
-    name = "adbc"
-    driver = "bigquery"
+    name = "bigquery"
+    driver = "adbc"
     driver_module = "adbc_driver_bigquery.dbapi"
     supports_statement_cache = True
 

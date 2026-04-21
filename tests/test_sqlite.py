@@ -11,8 +11,11 @@ pytest.importorskip("adbc_driver_sqlite")
 
 def test_engine_created():
     engine = sqlalchemy.create_engine("adbc+sqlite:///:memory:")
-    assert engine.dialect.name == "adbc"
-    assert engine.dialect.driver == "sqlite"
+    # `.name` is the backend identity (used by Alembic's DDL impl
+    # registry); `.driver` is the wire path. Reporting name="sqlite"
+    # lets Alembic autogenerate find the standard SQLite DDL impl.
+    assert engine.dialect.name == "sqlite"
+    assert engine.dialect.driver == "adbc"
 
 
 def test_select_one():

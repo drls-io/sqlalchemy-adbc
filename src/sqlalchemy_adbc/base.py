@@ -37,6 +37,11 @@ class ADBCDialect(DefaultDialect):
     the plain scheme requires ``adbc_driver_name`` in the URL query string.
     """
 
+    # SQLAlchemy convention: `name` = backend identity (used by
+    # Alembic's DDL impl registry, by reflection defaults, etc.);
+    # `driver` = driver identity (the wire path).
+    # Base class has no backend — subclasses override `name` to the
+    # backend they target ("sqlite", "postgresql", ...).
     name = "adbc"
     driver = "adbc"
     supports_statement_cache = True
