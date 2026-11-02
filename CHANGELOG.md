@@ -6,6 +6,15 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Reflect uppercase and mixed-case ADBC table/view types, including Flight SQL
+  `TABLE` metadata, without exposing indexes as tables.
+- Use numeric XDBC type codes when a driver's column type name is missing or
+  unrecognized. Recognized names and dialect-specific type mappings retain
+  precedence. This avoids `NullType` columns for Flight SQL metadata that
+  supplies type codes without names.
+
 ## [0.3.0] — 2026-04-21
 
 Largest release so far: table reflection, Alembic autogenerate,

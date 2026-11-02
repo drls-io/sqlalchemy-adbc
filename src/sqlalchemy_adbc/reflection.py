@@ -20,10 +20,8 @@ from sqlalchemy import types as sa_types
 # ── Type mapping ─────────────────────────────────────────────────────
 
 # xdbc_type_name (the SQL type string the backend reports) → SQLAlchemy
-# type class. Keys are upper-cased and whitespace-stripped. Unknown names
-# fall through to NullType — the caller still gets the column with the
-# raw string type via the `type` key, but SQLAlchemy can't bind values
-# through it, which is usually the right signal to fix the mapping.
+# type class. Keys are upper-cased and whitespace-stripped. Missing or unknown
+# names fall back to the XDBC type code, then NullType if neither is recognized.
 _TYPE_MAP: dict[str, type[sa_types.TypeEngine[Any]]] = {
     "INTEGER": sa_types.Integer,
     "INT": sa_types.Integer,
@@ -64,22 +62,49 @@ _TYPE_MAP: dict[str, type[sa_types.TypeEngine[Any]]] = {
     "UUID": sa_types.Uuid,
 }
 
+# XDBC/ODBC SQL type codes used by ADBC GetObjects. Flight SQL drivers may
+# populate these without xdbc_type_name. DATETIME (9) and INTERVAL (10) need
+# subtype metadata, so leave them unmapped rather than guessing a scalar type.
+_XDBC_TYPE_MAP: dict[int, type[sa_types.TypeEngine[Any]]] = {
+    -9: sa_types.String,  # WVARCHAR
+    -8: sa_types.CHAR,  # WCHAR
+    -7: sa_types.Boolean,  # BIT
+    -6: sa_types.SmallInteger,  # TINYINT
+    -5: sa_types.BigInteger,
+    -4: sa_types.LargeBinary,  # LONGVARBINARY
+    -3: sa_types.LargeBinary,  # VARBINARY
+    -2: sa_types.LargeBinary,  # BINARY
+    -1: sa_types.Text,  # LONGVARCHAR
+    1: sa_types.CHAR,
+    2: sa_types.Numeric,
+    3: sa_types.Numeric,  # DECIMAL
+    4: sa_types.Integer,
+    5: sa_types.SmallInteger,
+    6: sa_types.Float,
+    7: sa_types.Float,  # REAL
+    8: sa_types.Float,  # DOUBLE
+    12: sa_types.String,  # VARCHAR
+    91: sa_types.Date,
+    92: sa_types.Time,
+    93: sa_types.DateTime,
+}
+
 
 def adbc_type_to_sqla(
     type_name: str | None,
     *,
+    data_type: int | None = None,
     ischema_names: dict[str, type[sa_types.TypeEngine[Any]]] | None = None,
 ) -> sa_types.TypeEngine[Any]:
-    """Map an ADBC ``xdbc_type_name`` to a SQLAlchemy type instance.
+    """Map an ADBC type name or numeric XDBC code to a SQLAlchemy type.
 
     ``ischema_names`` is an optional per-dialect type registry merged
     on top of the generic map — Postgres passes its ``pg_ischema_names``
     so JSONB/UUID/etc. reflect to typed decorators rather than falling
     through to Text/String.
+    Recognized names take precedence over the numeric ``xdbc_data_type``.
     """
-    if not type_name:
-        return sa_types.NullType()
-    normalized = type_name.strip().upper()
+    normalized = (type_name or "").strip().upper()
     # Strip trailing length/precision (e.g. ``VARCHAR(32)`` → ``VARCHAR``).
     base = normalized.split("(", 1)[0].strip()
     # Dialect-specific overrides win over the generic map — this is how
@@ -89,6 +114,8 @@ def adbc_type_to_sqla(
         if dialect_cls is not None:
             return dialect_cls()
     cls = _TYPE_MAP.get(base) or _TYPE_MAP.get(normalized)
+    if cls is None and data_type is not None:
+        cls = _XDBC_TYPE_MAP.get(data_type)
     if cls is None:
         return sa_types.NullType()
     return cls()
@@ -140,7 +167,7 @@ def find_table(
             for tbl in sch.get("db_schema_tables") or []:
                 if tbl.get("table_name") != table_name:
                     continue
-                if tbl.get("table_type") in {"index", "sqlite_autoindex"}:
+                if (tbl.get("table_type") or "").lower() in {"index", "sqlite_autoindex"}:
                     continue
                 return tbl
     return None
@@ -181,7 +208,11 @@ def columns_from_table(
         out.append(
             {
                 "name": name,
-                "type": adbc_type_to_sqla(col.get("xdbc_type_name"), ischema_names=ischema_names),
+                "type": adbc_type_to_sqla(
+                    col.get("xdbc_type_name"),
+                    data_type=col.get("xdbc_data_type"),
+                    ischema_names=ischema_names,
+                ),
                 "nullable": nullable,
                 "default": col.get("xdbc_column_def"),
                 "autoincrement": bool(col.get("xdbc_is_autoincrement")) or "auto",
@@ -260,7 +291,7 @@ def table_names_from_tree(tree: list[dict[str, Any]], schema: str | None = None)
             if schema is not None and sch.get("db_schema_name") != schema:
                 continue
             for tbl in sch.get("db_schema_tables") or []:
-                if tbl.get("table_type") == "table":
+                if (tbl.get("table_type") or "").lower() == "table":
                     nm = tbl.get("table_name")
                     if nm:
                         names.append(nm)
@@ -275,7 +306,7 @@ def view_names_from_tree(tree: list[dict[str, Any]], schema: str | None = None) 
             if schema is not None and sch.get("db_schema_name") != schema:
                 continue
             for tbl in sch.get("db_schema_tables") or []:
-                if tbl.get("table_type") == "view":
+                if (tbl.get("table_type") or "").lower() == "view":
                     nm = tbl.get("table_name")
                     if nm:
                         names.append(nm)
