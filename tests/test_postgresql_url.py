@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy.engine.url import make_url
 
 from sqlalchemy_adbc.postgresql import ADBCPostgreSQLDialect
@@ -28,7 +29,8 @@ def test_no_port():
 
 
 def test_query_options_in_db_kwargs():
-    _, kwargs = _build("adbc+postgresql://user:pass@host:5432/mydb?sslmode=require&app=x")
+    args, kwargs = _build("adbc+postgresql://user:pass@host:5432/mydb?sslmode=require&app=x")
+    assert args == ["postgresql://user:pass@host:5432/mydb"]
     assert kwargs["db_kwargs"] == {"sslmode": "require", "app": "x"}
 
 
@@ -69,6 +71,17 @@ def test_username_special_chars_quoted():
 def test_database_with_spaces_quoted():
     args, _ = _build("adbc+postgresql://host/my%20db")
     assert args == ["postgresql://host/my%20db"]
+
+
+@pytest.mark.parametrize("database", ["my%2520db", "my%2Fdb", "my%3Fdb", "my%23db"])
+def test_database_escapes_are_preserved(database: str) -> None:
+    args, _ = _build(f"adbc+postgresql://host/{database}")
+    assert args == [f"postgresql://host/{database}"]
+
+
+def test_ipv6_host_stays_bracketed() -> None:
+    args, _ = _build("adbc+postgresql://user:pass@[::1]:5432/mydb")
+    assert args == ["postgresql://user:pass@[::1]:5432/mydb"]
 
 
 def test_defaults_localhost():

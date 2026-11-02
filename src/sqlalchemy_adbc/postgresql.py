@@ -13,10 +13,14 @@ from typing import Any
 from urllib.parse import quote
 
 from sqlalchemy.engine.interfaces import ReflectedColumn, ReflectedIndex
-from sqlalchemy.engine.url import URL
+from sqlalchemy.engine.url import URL, make_url
 
 from sqlalchemy_adbc.base import ADBCDialect
 from sqlalchemy_adbc.postgresql_types import pg_ischema_names
+
+# SQLAlchemy 2.0 preserves path escapes; 2.1 decodes them. Detect the public
+# parser behavior rather than relying on private URL fields or version strings.
+_DECODED_DATABASE_PATH = make_url("postgresql://localhost/a%20b").database == "a b"
 
 
 class ADBCPostgreSQLDialect(ADBCDialect):
@@ -45,21 +49,22 @@ class ADBCPostgreSQLDialect(ADBCDialect):
         super().__init__(**kwargs)
 
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
-        # SQLAlchemy's URL parser decodes percent-escapes in userinfo
-        # (`url.username`, `url.password`) but leaves the path component
-        # (`url.database`) untouched. So we re-quote userinfo before
-        # rebuilding the libpq URI — without it, a password like ``p@ss``
-        # would silently re-route to a different host — but we pass the
-        # database through as-is. Re-quoting the database would
-        # double-encode already-percent-escaped names (``my%20db`` →
-        # ``my%2520db``).
+        # Userinfo is decoded in both SQLAlchemy lines. Database paths need
+        # re-encoding only when the parser decoded them; quoting a preserved
+        # 2.0 path would turn my%20db into my%2520db. SQLAlchemy's URL renderer
+        # does not escape every character required by libpq's URI grammar.
         user = quote(url.username, safe="") if url.username else ""
         password = f":{quote(url.password, safe='')}" if url.password else ""
         auth = f"{user}{password}@" if user or url.password else ""
         host = url.host or "localhost"
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
         port = f":{url.port}" if url.port else ""
-        database = f"/{url.database}" if url.database else ""
-        uri = f"postgresql://{auth}{host}{port}{database}"
+        database = url.database or ""
+        if _DECODED_DATABASE_PATH:
+            database = quote(database, safe="")
+        path = f"/{database}" if database else ""
+        uri = f"postgresql://{auth}{host}{port}{path}"
 
         kwargs: dict[str, Any] = {}
         if url.query:

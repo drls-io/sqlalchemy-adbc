@@ -1,0 +1,10 @@
+# Runtime lower bounds exercised on Python 3.12. Keep these aligned with
+# pyproject.toml; development tools continue to resolve compatible versions.
+sqlalchemy==2.0.0
+adbc-driver-manager==1.13.0
+adbc-driver-postgresql==1.13.0
+adbc-driver-sqlite==1.13.0
+adbc-driver-flightsql==1.13.0
+pyarrow==14.0.1
+# PyArrow 14 wheels use the NumPy 1.x ABI.
+numpy<2

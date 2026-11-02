@@ -25,18 +25,18 @@ classifiers = [
 ]
 dependencies = [
     "sqlalchemy>=2.0",
-    "adbc-driver-manager>=1.0",
+    "adbc-driver-manager>=1.13.0",
     # ADBC returns results as Arrow record batches; the driver-manager
     # needs a PyArrow (or equivalent) backend installed to materialize
     # them through DBAPI. Without it, `cursor.fetchall()` raises a
     # ProgrammingError.
-    "pyarrow>=14.0",
+    "pyarrow>=14.0.1",
 ]
 
 [project.optional-dependencies]
-flightsql = ["adbc-driver-flightsql>=1.0"]
-postgresql = ["adbc-driver-postgresql>=1.0"]
-sqlite = ["adbc-driver-sqlite>=1.0"]
+flightsql = ["adbc-driver-flightsql>=1.13.0"]
+postgresql = ["adbc-driver-postgresql>=1.13.0"]
+sqlite = ["adbc-driver-sqlite>=1.13.0"]
 snowflake = ["adbc-driver-snowflake>=1.0"]
 bigquery = ["adbc-driver-bigquery>=1.0"]
 dev = [
@@ -44,7 +44,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.10",
-    "adbc-driver-sqlite>=1.0",
+    "adbc-driver-sqlite>=1.13.0",
     # Alembic autogenerate tests (test_alembic_autogenerate.py) rely on
     # the Inspector contract we implemented in #1 — pinning the dev
     # pin ensures CI exercises that integration path.

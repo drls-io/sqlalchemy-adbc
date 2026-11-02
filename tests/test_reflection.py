@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 import sqlalchemy as sa
 from sqlalchemy import inspect
 
@@ -361,13 +360,6 @@ def test_metadata_reflect_full_schema():
     assert fk.column.name == "id"
 
 
-@pytest.mark.xfail(
-    reason="ADBC SQLite driver reports xdbc_is_nullable='YES' for every "
-    "column, including NOT NULL ones — upstream limitation in "
-    "adbc_driver_sqlite GetObjects. Reflection code is correct; this "
-    "test unblocks automatically when the driver is fixed.",
-    strict=True,
-)
 def test_metadata_reflect_column_nullability():
     """NOT NULL constraints round-trip through reflection."""
     engine = _make_engine()

@@ -113,13 +113,28 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   Flight SQL inherit the shared reflection path but have no
   per-driver CI
   ([#12](https://github.com/drls-io/sqlalchemy-adbc/issues/12))
-- **ADBC SQLite NOT NULL reporting** — upstream driver always
-  reports nullable=True; reflection faithfully reflects that
-  (tracked, auto-reactivating xfail)
-  ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13))
+SQLite NOT NULL reflection is checked as a regular passing test; it is no longer
+marked as an expected upstream failure ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13)).
 
-Tests: 106 passing on Python 3.10–3.13, including 17 PostgreSQL
-integration tests against a service-container Postgres.
+### Dependency compatibility
+
+The driver manager and the SQLite, PostgreSQL and Flight SQL extras require
+ADBC 1.13.0 or newer. The previous PostgreSQL 1.0.0 lower bound does not support
+prepared statements returning result sets, which the typed read/write tests
+exercise. PyArrow requires at least 14.0.1; SQLAlchemy remains compatible with
+2.0 and 2.1. Snowflake and BigQuery driver bounds are unchanged and are not
+qualified by this matrix.
+
+CI tests the latest dependencies compatible with each supported Python version
+(3.10–3.13), plus a Python 3.12 job with pinned minimum runtime dependencies from
+[`requirements/minimum.txt`](requirements/minimum.txt). Both lanes run the full
+SQLite and PostgreSQL suites, including reads, writes, reflection and escaped
+database names. The minimum job constrains NumPy below 2 for PyArrow 14's wheel
+ABI; newer PyArrow installations can resolve their own compatible NumPy version.
+
+When installing in a host application such as Superset, retain that application's
+dependency constraints. The latest standalone-adapter job does not establish
+that a host application supports every version in that job.
 
 ## Development
 
@@ -131,6 +146,18 @@ pip install -e ".[dev]"
 pytest
 ruff check src/ tests/
 ```
+
+To reproduce the minimum-dependency lane, use a separate Python 3.12 environment:
+
+```bash
+pip install -c requirements/minimum.txt -e ".[dev,postgresql,flightsql]"
+pip check
+DRLS_PG_URL=adbc+postgresql://test:test@localhost:5432/test pytest
+```
+
+The PostgreSQL integration tests require a disposable server with permission to
+create test databases. They check INSERT/SELECT, UPDATE/read-back and
+DELETE/read-back through the adapter before removing the fixtures.
 
 ## Releasing
 

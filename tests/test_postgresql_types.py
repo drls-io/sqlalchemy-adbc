@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from urllib.parse import quote, urlsplit
 
 import pytest
 import sqlalchemy as sa
@@ -62,6 +63,43 @@ def engine() -> sa.Engine:
 def _drop_table(engine: sa.Engine, name: str) -> None:
     with engine.begin() as conn:
         conn.exec_driver_sql(f'DROP TABLE IF EXISTS "{name}"')
+
+
+@pytest.mark.parametrize("prefix", ["adbc space ", "adbc_percent%20_"])
+def test_escaped_database_name_crud(prefix: str) -> None:
+    """Connect to escaped database names and verify bound reads and writes."""
+    assert PG_URL is not None
+    name = prefix + uuid.uuid4().hex[:12]
+    admin = sa.create_engine(PG_URL, connect_args={"autocommit": True})
+    parts = urlsplit(PG_URL)
+    url = parts._replace(path="/" + quote(name, safe="")).geturl()
+    target = sa.create_engine(url)
+    created = False
+    try:
+        with admin.connect() as conn:
+            conn.exec_driver_sql(f'CREATE DATABASE "{name}"')
+        created = True
+        table = sa.Table(
+            "crud", sa.MetaData(), sa.Column("id", sa.Integer), sa.Column("value", sa.Text)
+        )
+        table.create(target)
+        with target.begin() as conn:
+            assert conn.exec_driver_sql("SELECT current_database()").scalar_one() == name
+            conn.execute(table.insert().values(id=1, value="before"))
+            assert conn.execute(sa.select(table)).all() == [(1, "before")]
+            conn.execute(table.update().where(table.c.id == 1).values(value="after"))
+            assert conn.execute(sa.select(table)).all() == [(1, "after")]
+            conn.execute(table.delete().where(table.c.id == 1))
+            assert conn.execute(sa.select(table)).all() == []
+        table.drop(target)
+    finally:
+        target.dispose()
+        try:
+            if created:
+                with admin.connect() as conn:
+                    conn.exec_driver_sql(f'DROP DATABASE "{name}"')
+        finally:
+            admin.dispose()
 
 
 # ── JSONB / JSON ─────────────────────────────────────────────────────

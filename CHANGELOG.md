@@ -6,6 +6,24 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Require ADBC driver manager 1.13.0+ and raise the SQLite, PostgreSQL and
+  Flight SQL driver extras to the same tested baseline. PostgreSQL 1.0.0 does
+  not support prepared statements returning result sets used by the adapter.
+  Raise the PyArrow minimum to 14.0.1, matching the driver DBAPI requirement.
+- Test minimum runtime dependencies on Python 3.12 and latest compatible
+  dependencies on Python 3.10–3.13, including PostgreSQL and SQLite read/write
+  tests and dependency consistency checks.
+
+### Fixed
+
+- Re-encode decoded PostgreSQL database names while preserving existing escapes
+  so URI generation works with both SQLAlchemy 2.0 and 2.1.
+  Preserve credentials, IPv6 host brackets and separately forwarded options.
+- Remove the obsolete strict xfail for SQLite NOT NULL reflection; the assertion
+  passes with the supported drivers and should fail if nullability regresses.
+
 ## [0.3.0] — 2026-04-21
 
 Largest release so far: table reflection, Alembic autogenerate,
