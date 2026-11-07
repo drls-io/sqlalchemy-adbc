@@ -20,13 +20,13 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import types as sa_types
-from sqlalchemy.dialects.postgresql import Range
+from sqlalchemy.dialects.postgresql import MultiRange, Range
 
 _VALID_BOUNDS = {"[)", "[]", "(]", "()"}
 _INFINITE = {"infinity", "-infinity"}
@@ -160,3 +160,50 @@ def format_range(value: Range[Any], codec: ElementCodec) -> str:
     lower = _format_element(value.lower, codec)
     upper = _format_element(value.upper, codec)
     return f"{bounds[0]}{lower},{upper}{bounds[1]}"
+
+
+def _split_top_level(body: str, text: str) -> list[str]:
+    """Split ``{...}`` contents on commas outside brackets and quotes."""
+    parts: list[str] = []
+    depth = 0
+    in_quotes = False
+    start = 0
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and in_quotes:
+            i += 2
+            continue
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif not in_quotes:
+            if ch in "[(":
+                depth += 1
+            elif ch in "])":
+                depth -= 1
+            elif ch == "," and depth == 0:
+                parts.append(body[start:i])
+                start = i + 1
+        i += 1
+    parts.append(body[start:])
+    if in_quotes or depth != 0 or any(p == "" for p in parts):
+        raise ValueError(f"invalid multirange text: {text!r}")
+    return parts
+
+
+def parse_multirange(text: str, codec: ElementCodec) -> MultiRange[Any]:
+    """PG multirange text (``{r1,r2}``) → ``MultiRange``."""
+    if len(text) < 2 or text[0] != "{" or text[-1] != "}":
+        raise ValueError(f"invalid multirange text: {text!r}")
+    body = text[1:-1]
+    if body == "":
+        return MultiRange([])
+    try:
+        return MultiRange([parse_range(part, codec) for part in _split_top_level(body, text)])
+    except ValueError as exc:
+        raise ValueError(f"invalid multirange text: {text!r}") from exc
+
+
+def format_multirange(values: Sequence[Range[Any]], codec: ElementCodec) -> str:
+    """``MultiRange`` or plain ``list[Range]`` → PG multirange text."""
+    return "{" + ",".join(format_range(r, codec) for r in values) + "}"

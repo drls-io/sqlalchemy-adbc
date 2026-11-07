@@ -130,3 +130,38 @@ def test_format_rejects_bad_bounds_and_naive_tstz():  # Review Focus 4
         format_range(Range(1, 2, bounds="[["), INT_CODEC)
     with pytest.raises(TypeError, match="aware"):
         format_range(Range(dt.datetime(2024, 1, 1), None, bounds="[)"), TIMESTAMPTZ_CODEC)
+
+
+# ── Task 3: multirange text ──────────────────────────────────────────
+
+from sqlalchemy.dialects.postgresql import MultiRange  # noqa: E402
+
+from sqlalchemy_adbc.postgresql_ranges import format_multirange, parse_multirange  # noqa: E402
+
+
+def test_parse_multirange():
+    assert parse_multirange("{[1,5),[10,20)}", INT_CODEC) == MultiRange(
+        [Range(1, 5, bounds="[)"), Range(10, 20, bounds="[)")]
+    )
+    assert parse_multirange("{}", INT_CODEC) == MultiRange([])
+    assert isinstance(parse_multirange("{}", INT_CODEC), list)
+
+
+def test_parse_multirange_with_quoted_timestamps():
+    m = parse_multirange(
+        '{["2024-01-01 00:00:00+00","2024-01-02 00:00:00+00"),["2024-03-01 00:00:00+00",)}',
+        TIMESTAMPTZ_CODEC,
+    )
+    assert len(m) == 2 and m[1].upper is None
+
+
+def test_format_multirange_roundtrip():
+    for text in ["{[1,5),[10,20)}", "{}"]:
+        assert format_multirange(parse_multirange(text, INT_CODEC), INT_CODEC) == text
+    assert format_multirange([Range(1, 2, bounds="[)")], INT_CODEC) == "{[1,2)}"  # plain list
+
+
+@pytest.mark.parametrize("bad", ["[1,5)", "{[1,5)", "{[1,5),}", ""])
+def test_malformed_multirange_raises(bad):
+    with pytest.raises(ValueError, match="multirange"):
+        parse_multirange(bad, INT_CODEC)
