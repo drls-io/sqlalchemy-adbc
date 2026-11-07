@@ -117,12 +117,12 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   Flight SQL inherit the shared reflection path but have no
   per-driver CI
   ([#12](https://github.com/drls-io/sqlalchemy-adbc/issues/12))
-- **ADBC SQLite NOT NULL reporting** — upstream driver always
-  reports nullable=True; reflection faithfully reflects that
-  (tracked, auto-reactivating xfail)
+- **ADBC SQLite NOT NULL reporting** — fixed upstream in
+  `adbc_driver_sqlite` 1.13 (Python ≥ 3.11). On older drivers every
+  column reflects as nullable=True
   ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13))
 
-Tests: 106 passing on Python 3.10–3.13, including 17 PostgreSQL
+Tests: 121 passing on Python 3.10–3.13, including 17 PostgreSQL
 integration tests against a service-container Postgres.
 
 ## Development
