@@ -3,10 +3,10 @@
 Register dialects via the ``sqlalchemy.dialects`` entry-point group (see
 pyproject.toml). URL forms::
 
-    adbc+flightsql://host:port/...?tls=true
-    adbc+sqlite:///path/to/db.sqlite
-    adbc+postgresql://user:pass@host:port/db
-    adbc+snowflake://user:pass@account/db/schema?warehouse=WH
+    flightsql+adbc://host:port/...?tls=true
+    sqlite+adbc:///path/to/db.sqlite
+    postgresql+adbc://user:pass@host:port/db
+    snowflake+adbc://user:pass@account/db/schema?warehouse=WH
 """
 
 from sqlalchemy_adbc.base import ADBCDialect

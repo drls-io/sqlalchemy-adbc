@@ -19,7 +19,7 @@ _ADBC_SQLITE_VERSION = tuple(int(part) for part in version("adbc-driver-sqlite")
 
 
 def _make_engine():
-    return sa.create_engine("adbc+sqlite:///:memory:")
+    return sa.create_engine("sqlite+adbc:///:memory:")
 
 
 def _seed(engine) -> None:

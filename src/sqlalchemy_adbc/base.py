@@ -16,6 +16,7 @@ Subclasses implement:
 from __future__ import annotations
 
 import importlib
+import warnings
 from typing import Any
 
 from sqlalchemy.engine.default import DefaultDialect
@@ -33,8 +34,10 @@ class ADBCDialect(DefaultDialect):
     """Base class for SQLAlchemy dialects backed by ADBC drivers.
 
     This class is registered as the plain ``adbc://`` scheme. In practice
-    callers should use a driver-specific variant like ``adbc+flightsql://``;
+    callers should use a backend-specific variant like ``flightsql+adbc://``;
     the plain scheme requires ``adbc_driver_name`` in the URL query string.
+    The pre-0.4 ``adbc+<backend>://`` spellings remain registered as
+    deprecated aliases.
     """
 
     # SQLAlchemy convention: `name` = backend identity (used by
@@ -76,6 +79,15 @@ class ADBCDialect(DefaultDialect):
 
         Subclasses should override ``build_connect_args`` instead of this.
         """
+        if url.drivername.startswith("adbc+"):
+            backend = url.get_driver_name()
+            warnings.warn(
+                f"URL scheme 'adbc+{backend}://' is deprecated; use "
+                f"'{backend}+adbc://' (SQLAlchemy's backend+driver order). "
+                "The old spelling will be removed in 1.0.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         return self.build_connect_args(url)
 
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:

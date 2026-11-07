@@ -2,7 +2,7 @@
 
 URL form::
 
-    adbc+bigquery:///<project>?dataset=<dataset>&credentials_path=/path/to/sa.json
+    bigquery+adbc:///<project>?dataset=<dataset>&credentials_path=/path/to/sa.json
 
 adbc_driver_bigquery reads the GCP project and optional dataset via
 db_kwargs; we pass the URL query string through verbatim.

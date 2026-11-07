@@ -2,7 +2,7 @@
 
 URL form::
 
-    adbc+flightsql://host:port?tls=true&authorization=Bearer%20...
+    flightsql+adbc://host:port?tls=true&authorization=Bearer%20...
 
 All query-string keys are forwarded to the driver as ``db_kwargs``. The
 dialect also understands a few shorthands:
@@ -69,7 +69,7 @@ class ADBCFlightSQLDialect(ADBCDialect):
             db_kwargs[auth_key] = query.pop("authorization")
 
         # Caller can also set the bearer via SQLAlchemy URL password:
-        #     adbc+flightsql://user:<token>@host:443?tls=true
+        #     flightsql+adbc://user:<token>@host:443?tls=true
         # The "user" part is ignored by Flight SQL; we just read the
         # password into the Authorization header.
         if url.password:

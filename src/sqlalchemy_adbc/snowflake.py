@@ -2,7 +2,7 @@
 
 URL form::
 
-    adbc+snowflake://user:password@account/database/schema?warehouse=WH&role=R
+    snowflake+adbc://user:password@account/database/schema?warehouse=WH&role=R
 
 adbc_driver_snowflake expects a DSN of the form
 ``user:password@account/database/schema?warehouse=...``. We URL-quote

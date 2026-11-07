@@ -58,8 +58,15 @@ Issues = "https://github.com/drls-io/sqlalchemy-adbc/issues"
 
 # SQLAlchemy discovers dialects via the `sqlalchemy.dialects` entry point
 # group. The name form is `<name>` or `<name>.<driver>` — the second is what
-# lets us write `adbc+flightsql://` etc.
+# lets us write `flightsql+adbc://` etc.
 [project.entry-points."sqlalchemy.dialects"]
+# SQLAlchemy URLs are <backend>+<driver>; ADBC is the driver (#15).
+"flightsql.adbc" = "sqlalchemy_adbc.flightsql:ADBCFlightSQLDialect"
+"sqlite.adbc" = "sqlalchemy_adbc.sqlite:ADBCSQLiteDialect"
+"postgresql.adbc" = "sqlalchemy_adbc.postgresql:ADBCPostgreSQLDialect"
+"snowflake.adbc" = "sqlalchemy_adbc.snowflake:ADBCSnowflakeDialect"
+"bigquery.adbc" = "sqlalchemy_adbc.bigquery:ADBCBigQueryDialect"
+# Deprecated adbc+<backend> spellings; removed in 1.0.
 "adbc" = "sqlalchemy_adbc.base:ADBCDialect"
 "adbc.flightsql" = "sqlalchemy_adbc.flightsql:ADBCFlightSQLDialect"
 "adbc.sqlite" = "sqlalchemy_adbc.sqlite:ADBCSQLiteDialect"

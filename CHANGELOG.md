@@ -6,6 +6,22 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **URL schemes are now `<backend>+adbc://`** — `postgresql+adbc://`,
+  `sqlite+adbc://`, `flightsql+adbc://`, `snowflake+adbc://`,
+  `bigquery+adbc://`. This follows SQLAlchemy's `dialect+driver`
+  convention: ADBC is the driver. `URL.get_backend_name()` now agrees
+  with `dialect.name`, so tools that pick behavior from the URL (for
+  example Superset's engine specs) see the real backend.
+  ([#15](https://github.com/drls-io/sqlalchemy-adbc/issues/15))
+
+### Deprecated
+
+- **`adbc+<backend>://` URL spellings** — still registered and
+  functional, but `create_engine` emits a `DeprecationWarning`. They
+  will be removed in 1.0.
+
 ### Fixed
 
 - **PostgreSQL database names with SQLAlchemy 2.1** — SQLAlchemy 2.1
