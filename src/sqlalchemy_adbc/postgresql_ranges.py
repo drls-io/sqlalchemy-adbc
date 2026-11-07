@@ -226,6 +226,8 @@ class _ElementCast(sa_types.TypeDecorator[Any]):
 
     def __init__(self, element_type: sa_types.TypeEngine[Any]) -> None:
         super().__init__()
+        # Kept under the constructor's name so SQLAlchemy's cache key sees it.
+        self.element_type = element_type
         self.impl = element_type
 
     def bind_expression(self, bindvalue: Any) -> Any:

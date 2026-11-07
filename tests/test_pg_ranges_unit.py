@@ -250,3 +250,12 @@ def test_hstore_uses_sqlalchemy_codec():
     assert "?" in has_key and "AS HSTORE)" not in has_key
     contains = str(sa.select(t.c.h).where(t.c.h.contains({"a": "1"})).compile(dialect=d))
     assert "@> CAST(" in contains and "AS HSTORE)" in contains
+
+
+# ── Final review fix: element-cast cache keys ────────────────────────
+
+
+def test_element_cast_cache_key_includes_element_type():
+    from sqlalchemy_adbc.postgresql_ranges import _ElementCast
+
+    assert _ElementCast(sa.Integer())._static_cache_key != _ElementCast(sa.Date())._static_cache_key

@@ -128,7 +128,7 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   column reflects as nullable=True
   ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13))
 
-Tests: 180 passing on Python 3.10–3.13, including 32 PostgreSQL
+Tests: 180 passing on Python 3.10–3.13, including 25 PostgreSQL
 integration tests against a service-container Postgres.
 
 ## Development
