@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-07
+
+URL schemes now follow SQLAlchemy's `<backend>+adbc://` convention,
+plus compatibility fixes for SQLAlchemy 2.1 and ADBC 1.13. Existing
+`adbc+<backend>://` URLs keep working and emit a `DeprecationWarning`.
+
 ### Changed
 
 - **URL schemes are now `<backend>+adbc://`** — `postgresql+adbc://`,
