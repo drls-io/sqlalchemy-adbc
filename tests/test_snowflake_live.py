@@ -106,3 +106,56 @@ def test_number_binds_whole_values_without_float_conversion(engine, table):
         c.execute(t.insert().values(ID=big))
     with engine.connect() as c:
         assert c.execute(sa.select(t.c.ID).where(t.c.ID == big)).scalar_one() == big
+
+
+def test_bind_every_python_type_in_one_row(engine, table):
+    """The exact cases that failed on the raw driver (finding B)."""
+    t = sa.Table(table, sa.MetaData(), autoload_with=engine)
+    aware = dt.datetime(2024, 1, 2, 3, 4, 5, 123456, tzinfo=dt.timezone.utc)
+    with engine.begin() as c:
+        c.execute(
+            t.insert().values(
+                ID=7,
+                N=Decimal("12.34"),
+                NAME=None,  # the only value for this column → typed null path
+                SCORE=None,
+                ACTIVE=True,
+                D=dt.date(2024, 1, 2),
+                T=dt.time(3, 4, 5),
+                TS=dt.datetime(2024, 1, 2, 3, 4, 5),
+                TSZ=aware,
+                B=b"\x01\xff",
+            )
+        )
+    with engine.connect() as c:
+        r = c.execute(sa.select(t).where(t.c.ID == 7)).one()._mapping
+    assert r["N"] == Decimal("12.34") and r["NAME"] is None and r["SCORE"] is None
+    assert r["ACTIVE"] is True and r["D"] == dt.date(2024, 1, 2) and r["T"] == dt.time(3, 4, 5)
+    assert r["TS"] == dt.datetime(2024, 1, 2, 3, 4, 5)
+    assert r["TSZ"] == aware
+    assert r["B"] == b"\x01\xff"
+
+
+def test_executemany_with_all_null_column(engine, table):
+    t = sa.Table(table, sa.MetaData(), autoload_with=engine)
+    with engine.begin() as c:
+        c.execute(
+            t.insert(), [{"ID": 8, "NAME": None, "D": None}, {"ID": 9, "NAME": None, "D": None}]
+        )
+    with engine.connect() as c:
+        rows = c.execute(
+            sa.select(t.c.ID, t.c.NAME, t.c.D).where(t.c.ID.in_([8, 9])).order_by(t.c.ID)
+        ).all()
+    assert rows == [(8, None, None), (9, None, None)]
+
+
+def test_text_statement_with_date_and_none_params(engine, table):
+    with engine.begin() as c:
+        c.execute(
+            sa.text(f'INSERT INTO "{table}" ("ID", "D", "NAME") VALUES (:i, :d, :n)'),
+            {"i": 10, "d": "2024-05-06", "n": None},
+        )
+    with engine.connect() as c:
+        assert c.execute(
+            sa.text(f'SELECT "D" FROM "{table}" WHERE "ID" = :i'), {"i": 10}
+        ).scalar_one() == dt.date(2024, 5, 6)
