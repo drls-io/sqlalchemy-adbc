@@ -8,17 +8,79 @@ adbc_driver_snowflake expects a DSN of the form
 ``user:password@account/database/schema?warehouse=...``. We URL-quote
 every user-supplied component so passwords with ``@``, ``:``, ``/``,
 ``%``, ``?``, ``#`` and query values with spaces don't corrupt the DSN.
+
+Parameter binding: the driver (1.11) accepts only int, str, float and
+bool Arrow parameters, and rejects a column that is null in every row
+(Arrow ``null`` type). Snowflake converts string parameters into DATE,
+TIMESTAMP_*, NUMBER and BINARY columns implicitly, so ``colspecs`` render
+those Python types as strings, and ``do_execute`` hands the cursor an
+explicitly typed record batch in which all-null columns are strings.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from decimal import Decimal
 from typing import Any
 from urllib.parse import quote
 
+import pyarrow as pa
+from sqlalchemy import types as sa_types
 from sqlalchemy.engine.url import URL
 
 from sqlalchemy_adbc.base import ADBCDialect
 from sqlalchemy_adbc.snowflake_types import snowflake_ischema_names
+
+
+class _IsoDate(sa_types.Date):
+    def bind_processor(self, dialect: Any) -> Any:
+        return lambda v: None if v is None else v.isoformat()
+
+
+class _IsoDateTime(sa_types.DateTime):
+    def bind_processor(self, dialect: Any) -> Any:
+        return lambda v: None if v is None else v.isoformat(sep=" ")
+
+
+class _IsoTime(sa_types.Time):
+    def bind_processor(self, dialect: Any) -> Any:
+        return lambda v: None if v is None else v.isoformat()
+
+
+class _StringDecimal(sa_types.Numeric):
+    """Decimal → str (exact, driver can't bind decimal128); int/float untouched."""
+
+    def bind_processor(self, dialect: Any) -> Any:
+        return lambda v: str(v) if isinstance(v, Decimal) else v
+
+
+class _HexBinary(sa_types.LargeBinary):
+    def bind_processor(self, dialect: Any) -> Any:
+        return lambda v: None if v is None else bytes(v).hex()
+
+
+def to_record_batch(seq_of_parameters: Sequence[Sequence[Any]]) -> pa.RecordBatch | None:
+    """Positional parameter rows → record batch with explicit column types.
+
+    pyarrow infers each column from its non-null values; a column that is
+    None in every row would infer as Arrow ``null``, which the Snowflake
+    driver rejects, so it becomes a nullable string instead (Snowflake
+    accepts a NULL string for any column type). Returns None when there is
+    nothing to bind.
+    """
+    rows = [tuple(p) for p in seq_of_parameters]
+    if not rows or not rows[0]:
+        return None
+    columns = list(zip(*rows, strict=True))
+    arrays = [
+        pa.array(col, type=pa.string()) if all(v is None for v in col) else pa.array(col)
+        for col in columns
+    ]
+    return pa.RecordBatch.from_arrays(arrays, names=[str(i) for i in range(len(arrays))])
+
+
+def _positional(parameters: Any) -> bool:
+    return isinstance(parameters, (tuple, list)) and not isinstance(parameters, dict)
 
 
 class ADBCSnowflakeDialect(ADBCDialect):
@@ -30,6 +92,29 @@ class ADBCSnowflakeDialect(ADBCDialect):
     # NUMBER is exact; without this SQLAlchemy's Numeric binds ints and
     # Decimals as float and NUMBER(38,0) values above 2**53 lose digits.
     supports_native_decimal = True
+    colspecs = {
+        sa_types.Date: _IsoDate,
+        sa_types.DateTime: _IsoDateTime,
+        sa_types.Time: _IsoTime,
+        sa_types.Numeric: _StringDecimal,
+        sa_types.Float: sa_types.Float,  # keep Float off the Numeric→string path
+        sa_types.LargeBinary: _HexBinary,
+    }
+
+    def do_execute(self, cursor: Any, statement: Any, parameters: Any, context: Any = None) -> None:
+        if _positional(parameters):
+            parameters = to_record_batch([parameters])
+        cursor.execute(statement, parameters)
+
+    def do_executemany(
+        self, cursor: Any, statement: Any, parameters: Any, context: Any = None
+    ) -> None:
+        if _positional(parameters) and all(_positional(p) for p in parameters):
+            batch = to_record_batch(parameters)
+            if batch is None:
+                return
+            parameters = batch
+        cursor.executemany(statement, parameters)
 
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
         # SQLAlchemy decodes userinfo but leaves the database path

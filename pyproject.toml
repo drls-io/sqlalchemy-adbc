@@ -44,6 +44,8 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.10",
+    # Type stubs for pyarrow (used by the Snowflake dialect's typed binds).
+    "pyarrow-stubs>=20",
     "adbc-driver-sqlite>=1.0",
     # Alembic autogenerate tests (test_alembic_autogenerate.py) rely on
     # the Inspector contract we implemented in #1 — pinning the dev
@@ -98,6 +100,7 @@ follow_imports = "silent"
 
 # ADBC driver wheels don't ship type stubs; lazy imports in the dialect
 # modules guard on ImportError so we only pay the type-ignore cost here.
+
 [[tool.mypy.overrides]]
 module = [
     "adbc_driver_manager.*",

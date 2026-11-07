@@ -8,6 +8,14 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Snowflake parameter binding for every Python type** — the ADBC
+  Snowflake driver binds only `int`/`str`/`float`/`bool` and rejects a
+  parameter that is `None` in every row. The dialect now renders `Decimal`,
+  `date`, `datetime`, `time` and `bytes` as the strings Snowflake converts
+  implicitly, and hands the cursor an explicitly typed Arrow batch so
+  all-null columns bind as NULL. ORM inserts with unset attributes and
+  `insert().values(d=date(...))` now work on Snowflake.
+  ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
 - **Snowflake type registry** — `NUMBER`, `TIMESTAMP_NTZ`, `TIMESTAMP_TZ`,
   `TIMESTAMP_LTZ`, `VARIANT`, `OBJECT` and `ARRAY` columns reflected as
   `NullType`; they now reflect to typed SQLAlchemy types. `NUMBER(p,0)`
