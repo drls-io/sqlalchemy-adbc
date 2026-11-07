@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-07
+
+Proxy and authentication support (basic, Kerberos/Negotiate, OAuth2), PostgreSQL
+range, multirange and hstore types, a Snowflake type registry and binding fixes,
+and large fetch and reflection speedups.
+
 ### Added
 
 - **Proxy settings from a local config file** — `HTTP_PROXY` /
@@ -50,6 +56,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
 ### Changed
 
+- **Reflection fetches the catalog once per Inspector** — every reflection
+  method re-fetched `adbc_get_objects`; one table autoload made five or six
+  round-trips (40 s on Snowflake). The tree is now cached through
+  SQLAlchemy's `info_cache`, so an autoload costs one fetch per table
+  (10 s on Snowflake, the rest being the driver's single round-trip).
+  ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
 - **Column-wise result conversion** — the dialect now wraps the ADBC DBAPI
   cursor and converts each Arrow record batch column-wise instead of cell
   by cell. `fetchall()` on 1M rows × 4 columns drops from 4.6 s to 0.5 s,
