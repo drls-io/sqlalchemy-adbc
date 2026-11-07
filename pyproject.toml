@@ -31,6 +31,8 @@ dependencies = [
     # them through DBAPI. Without it, `cursor.fetchall()` raises a
     # ProgrammingError.
     "pyarrow>=14.0",
+    # TOML config file (tomllib is stdlib from 3.11).
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -103,6 +105,7 @@ follow_imports = "silent"
 
 [[tool.mypy.overrides]]
 module = [
+    "tomli",  # only imported on Python < 3.11
     "adbc_driver_manager.*",
     "adbc_driver_flightsql.*",
     "adbc_driver_postgresql.*",
