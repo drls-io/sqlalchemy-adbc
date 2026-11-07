@@ -8,11 +8,14 @@ and are manually smoke-tested.
 
 from __future__ import annotations
 
+from importlib.metadata import version
 from typing import Any
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import inspect
+
+_ADBC_SQLITE_VERSION = tuple(int(part) for part in version("adbc-driver-sqlite").split(".")[:2])
 
 
 def _make_engine():
@@ -362,10 +365,9 @@ def test_metadata_reflect_full_schema():
 
 
 @pytest.mark.xfail(
-    reason="ADBC SQLite driver reports xdbc_is_nullable='YES' for every "
-    "column, including NOT NULL ones — upstream limitation in "
-    "adbc_driver_sqlite GetObjects. Reflection code is correct; this "
-    "test unblocks automatically when the driver is fixed.",
+    _ADBC_SQLITE_VERSION < (1, 13),
+    reason="adbc_driver_sqlite < 1.13 reports xdbc_is_nullable='YES' for "
+    "every column, including NOT NULL ones (fixed upstream in 1.13.0).",
     strict=True,
 )
 def test_metadata_reflect_column_nullability():

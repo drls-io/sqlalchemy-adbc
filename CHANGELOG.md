@@ -6,6 +6,18 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **PostgreSQL database names with SQLAlchemy 2.1** — SQLAlchemy 2.1
+  percent-decodes `URL.database`, so the libpq URI lost its escapes
+  (`my%20db` became `my db`). The dialect now detects the parser's
+  behavior and quotes the database path exactly once on both 2.0 and
+  2.1. ([#19](https://github.com/drls-io/sqlalchemy-adbc/issues/19))
+- **CI on ADBC 1.13** — `adbc_driver_sqlite` 1.13.0 reports NOT NULL
+  correctly, which turned the strict xfail for column nullability into
+  a hard failure. The xfail now applies only to drivers older than
+  1.13. ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13))
+
 ## [0.3.0] — 2026-04-21
 
 Largest release so far: table reflection, Alembic autogenerate,

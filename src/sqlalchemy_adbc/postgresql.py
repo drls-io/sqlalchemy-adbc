@@ -10,13 +10,18 @@ corrupt the DSN or change its parse. Without quoting, a password like
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from sqlalchemy.engine.interfaces import ReflectedColumn, ReflectedIndex
-from sqlalchemy.engine.url import URL
+from sqlalchemy.engine.url import URL, make_url
 
 from sqlalchemy_adbc.base import ADBCDialect
 from sqlalchemy_adbc.postgresql_types import pg_ischema_names
+
+# SQLAlchemy 2.0 leaves ``URL.database`` percent-encoded; 2.1 decodes it
+# like userinfo. Probe once so the libpq URI is quoted exactly once on
+# either version.
+_URL_DECODES_DATABASE = make_url("postgresql://h/a%20b").database == "a b"
 
 
 class ADBCPostgreSQLDialect(ADBCDialect):
@@ -45,20 +50,20 @@ class ADBCPostgreSQLDialect(ADBCDialect):
         super().__init__(**kwargs)
 
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
-        # SQLAlchemy's URL parser decodes percent-escapes in userinfo
-        # (`url.username`, `url.password`) but leaves the path component
-        # (`url.database`) untouched. So we re-quote userinfo before
-        # rebuilding the libpq URI — without it, a password like ``p@ss``
-        # would silently re-route to a different host — but we pass the
-        # database through as-is. Re-quoting the database would
-        # double-encode already-percent-escaped names (``my%20db`` →
-        # ``my%2520db``).
+        # Every user-supplied component is reduced to its raw value and
+        # then quoted once, so a password like ``p@ss`` cannot re-route
+        # libpq to another host and a database named ``my%20db`` is not
+        # collapsed to ``my db``. Userinfo is always decoded by SQLAlchemy;
+        # the database path only from 2.1 (``_URL_DECODES_DATABASE``).
         user = quote(url.username, safe="") if url.username else ""
         password = f":{quote(url.password, safe='')}" if url.password else ""
         auth = f"{user}{password}@" if user or url.password else ""
         host = url.host or "localhost"
         port = f":{url.port}" if url.port else ""
-        database = f"/{url.database}" if url.database else ""
+        database = ""
+        if url.database:
+            raw = url.database if _URL_DECODES_DATABASE else unquote(url.database)
+            database = f"/{quote(raw, safe='')}"
         uri = f"postgresql://{auth}{host}{port}{database}"
 
         kwargs: dict[str, Any] = {}

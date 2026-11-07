@@ -71,6 +71,19 @@ def test_database_with_spaces_quoted():
     assert args == ["postgresql://host/my%20db"]
 
 
+def test_database_with_encoded_percent_sequence_roundtrips():
+    # A database literally named ``my%20db`` arrives as ``%2520``. It must
+    # come out exactly as it went in, not collapsed to a space.
+    args, _ = _build("adbc+postgresql://host/my%2520db")
+    assert args == ["postgresql://host/my%2520db"]
+
+
+def test_database_with_encoded_slash_quoted():
+    # libpq reads ``/`` as a path separator, so it must stay escaped.
+    args, _ = _build("adbc+postgresql://host/a%2Fb")
+    assert args == ["postgresql://host/a%2Fb"]
+
+
 def test_defaults_localhost():
     args, _ = _build("adbc+postgresql:///mydb")
     assert args == ["postgresql://localhost/mydb"]
