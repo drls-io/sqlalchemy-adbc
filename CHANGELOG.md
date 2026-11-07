@@ -6,6 +6,17 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Snowflake type registry** — `NUMBER`, `TIMESTAMP_NTZ`, `TIMESTAMP_TZ`,
+  `TIMESTAMP_LTZ`, `VARIANT`, `OBJECT` and `ARRAY` columns reflected as
+  `NullType`; they now reflect to typed SQLAlchemy types. `NUMBER(p,0)`
+  reads as `int`, `NUMBER(p,s)` as `Decimal`, `TEXT(n)` as `String(n)`,
+  `TIMESTAMP_TZ`/`_LTZ` as `DateTime(timezone=True)`. `VARIANT`/`OBJECT`/
+  `ARRAY` decode JSON on read and bind through `PARSE_JSON`. Registries can
+  now carry the driver's column size and decimal digits into the type.
+  Opt-in live tests gated on `DRLS_SNOWFLAKE_URL`.
+  ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
 ### Changed
 
 - **Column-wise result conversion** — the dialect now wraps the ADBC DBAPI

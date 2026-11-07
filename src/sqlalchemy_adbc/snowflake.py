@@ -18,6 +18,7 @@ from urllib.parse import quote
 from sqlalchemy.engine.url import URL
 
 from sqlalchemy_adbc.base import ADBCDialect
+from sqlalchemy_adbc.snowflake_types import snowflake_ischema_names
 
 
 class ADBCSnowflakeDialect(ADBCDialect):
@@ -25,6 +26,10 @@ class ADBCSnowflakeDialect(ADBCDialect):
     driver = "adbc"
     driver_module = "adbc_driver_snowflake.dbapi"
     supports_statement_cache = True
+    ischema_names = snowflake_ischema_names
+    # NUMBER is exact; without this SQLAlchemy's Numeric binds ints and
+    # Decimals as float and NUMBER(38,0) values above 2**53 lose digits.
+    supports_native_decimal = True
 
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
         # SQLAlchemy decodes userinfo but leaves the database path

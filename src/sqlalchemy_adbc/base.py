@@ -157,6 +157,11 @@ class ADBCDialect(DefaultDialect):
     # close to "generic SQL-92". Subclasses override as needed.
     paramstyle = "qmark"
 
+    ischema_names: dict[str, Any] | None = None
+    """Per-backend type registry merged over the generic ``xdbc_type_name``
+    map during column reflection; see :func:`reflection.adbc_type_to_sqla`.
+    """
+
     driver_module: str | None = None
     """Dotted path to the concrete ADBC driver's ``.dbapi`` module.
 
@@ -319,7 +324,7 @@ class ADBCDialect(DefaultDialect):
         tbl = reflection.find_table(tree, table_name, schema=schema)
         if tbl is None:
             return []
-        return reflection.columns_from_table(tbl)  # type: ignore[return-value]
+        return reflection.columns_from_table(tbl, ischema_names=self.ischema_names)  # type: ignore[return-value]
 
     def get_pk_constraint(
         self, connection: Any, table_name: str, schema: str | None = None, **kw: Any
