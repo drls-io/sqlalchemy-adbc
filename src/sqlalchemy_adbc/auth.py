@@ -14,6 +14,7 @@ Secrets never appear in exception messages or ``repr``.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import threading
@@ -22,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.exc import ArgumentError
@@ -38,10 +39,12 @@ AUTH_URL_KEYS = (
     "oauth2_flow",
     "oauth2_token_url",
     "oauth2_client_id",
-    "oauth2_client_secret",
     "oauth2_scope",
     "oauth2_audience",
 )
+# With auth_profile, the URL may only tweak these; everything that decides
+# where the profile's secret is sent stays under the config owner's control.
+_PROFILE_OVERRIDABLE = {"oauth2_scope", "oauth2_audience"}
 
 # config profile key → AuthSettings field
 _PROFILE_FIELDS = {
@@ -94,11 +97,28 @@ def settings_from_query(
     config: Config,
     *,
     env: Mapping[str, str] = os.environ,
+    password: str | None = None,
 ) -> AuthSettings:
-    """Pop the auth keys out of ``query`` and merge them over a config profile."""
-    url_values = {k: query.pop(k) for k in AUTH_URL_KEYS if k in query}
-    merged: dict[str, str] = {}
+    """Pop the auth keys out of ``query`` and merge them over a config profile.
 
+    Trust model: the URL author (e.g. a Superset database admin) may be less
+    trusted than the owner of the config file and process environment. So
+    ``env:`` references resolve only from the config, a URL that names a
+    profile cannot redirect that profile's secret (only scope/audience may be
+    overridden), and a client secret is never read from the query string: it
+    comes from the profile or from the URL password, which SQLAlchemy masks.
+    """
+    if "oauth2_client_secret" in query:
+        raise ArgumentError(
+            "oauth2_client_secret is not accepted in the URL query; put it in the URL "
+            "password (user = client_id) or in a config profile"
+        )
+    url_values = {k: query.pop(k) for k in AUTH_URL_KEYS if k in query}
+    for key, raw in url_values.items():
+        if raw.startswith("env:"):
+            raise ArgumentError(f"{key}: env: references are only allowed in the config file")
+
+    merged: dict[str, str] = {}
     profile_name = url_values.pop("auth_profile", None)
     if profile_name is not None:
         profile = config.auth_profiles.get(profile_name)
@@ -107,15 +127,21 @@ def settings_from_query(
             raise ArgumentError(f"auth_profile {profile_name!r} not found in {where}")
         for key, raw in profile.items():
             if key in _PROFILE_FIELDS:
-                merged[_PROFILE_FIELDS[key]] = raw
+                fname = _PROFILE_FIELDS[key]
+                merged[fname] = resolve_env_ref(raw, key=fname, env=env)
+        for key in url_values:
+            if _URL_FIELDS[key] not in _PROFILE_OVERRIDABLE:
+                raise ArgumentError(
+                    f"cannot combine auth_profile with {key}; set it in the profile"
+                )
 
     for key, raw in url_values.items():
         merged[_URL_FIELDS[key]] = raw
 
-    settings = AuthSettings()
-    for fname, raw in merged.items():
-        settings = replace(settings, **{fname: resolve_env_ref(raw, key=fname, env=env)})
+    if merged.get("type") == "oauth2" and not merged.get("oauth2_client_secret") and password:
+        merged["oauth2_client_secret"] = password
 
+    settings = AuthSettings(**merged)
     if settings.type is not None and settings.type not in AUTH_TYPES:
         raise ArgumentError(f"auth must be one of {', '.join(AUTH_TYPES)}")
     return settings
@@ -131,6 +157,28 @@ def require(settings: AuthSettings, *names: str) -> None:
 # ── OAuth2 client credentials ────────────────────────────────────────
 
 _TOKEN_SAFETY_MARGIN_S = 60.0
+_LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+
+
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Credentials must never follow a 30x to another host."""
+
+    def redirect_request(
+        self, req: Any, fp: Any, code: Any, msg: Any, headers: Any, newurl: Any
+    ) -> Any:
+        return None
+
+
+_default_opener = urllib.request.build_opener(_NoRedirects)
+
+
+def _check_token_url(token_url: str) -> None:
+    parsed = urllib.parse.urlsplit(token_url)
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme == "http" and parsed.hostname in _LOOPBACK:
+        return
+    raise ArgumentError(f"OAuth2 token_url must use https (got {parsed.scheme or 'no'} scheme)")
 
 
 class OAuth2ClientCredentials:
@@ -149,9 +197,10 @@ class OAuth2ClientCredentials:
         scope: str | None = None,
         audience: str | None = None,
         *,
-        opener: Callable[..., Any] = urllib.request.urlopen,
+        opener: Callable[..., Any] = _default_opener.open,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
+        _check_token_url(token_url)
         self.token_url = token_url
         self.client_id = client_id
         self._client_secret = client_secret
@@ -229,7 +278,7 @@ class OAuth2ClientCredentials:
         return str(token), expires_in
 
 
-_sources: dict[tuple[str, str, str | None, str | None], OAuth2ClientCredentials] = {}
+_sources: dict[tuple[str, str, str | None, str | None, str], OAuth2ClientCredentials] = {}
 _sources_lock = threading.Lock()
 
 
@@ -242,6 +291,8 @@ def token_source_for(settings: AuthSettings) -> OAuth2ClientCredentials:
         settings.oauth2_client_id,
         settings.oauth2_scope,
         settings.oauth2_audience,
+        # Digest, not plaintext: a different secret must never reuse a token.
+        hashlib.sha256(settings.oauth2_client_secret.encode()).hexdigest(),
     )
     with _sources_lock:
         source = _sources.get(key)

@@ -64,6 +64,51 @@ def test_no_auth_keys_gives_type_none():
     assert settings_from_query({"tls": "false"}, Config({}, {}, None)).type is None
 
 
+# Threat model: the URL author (a Superset DB admin) is less trusted than the
+# owner of the server's config file and environment.
+
+
+def test_url_cannot_redirect_a_profile_secret():
+    for key in ("oauth2_token_url", "oauth2_flow", "spn", "auth", "oauth2_client_id"):
+        with pytest.raises(ArgumentError, match=f"cannot combine auth_profile with {key}"):
+            settings_from_query({"auth_profile": "flight", key: "x"}, CFG, env={"SEC": "s"})
+    # scope/audience are harmless to override
+    s = settings_from_query(
+        {"auth_profile": "flight", "oauth2_scope": "a", "oauth2_audience": "b"},
+        CFG,
+        env={"SEC": "s"},
+    )
+    assert (s.oauth2_scope, s.oauth2_audience) == ("a", "b")
+
+
+def test_env_refs_only_honoured_from_config_not_url():
+    with pytest.raises(ArgumentError, match="env: references are only allowed in the config file"):
+        settings_from_query(
+            {"auth": "oauth2", "oauth2_client_id": "env:AWS_SECRET_ACCESS_KEY"}, CFG
+        )
+
+
+def test_client_secret_never_accepted_in_url_query():
+    with pytest.raises(
+        ArgumentError, match="oauth2_client_secret is not accepted in the URL query"
+    ):
+        settings_from_query({"auth": "oauth2", "oauth2_client_secret": "s"}, CFG)
+
+
+def test_client_secret_from_url_password_when_no_profile():
+    s = settings_from_query(
+        {"auth": "oauth2", "oauth2_token_url": "https://idp/t", "oauth2_client_id": "cid"},
+        CFG,
+        password="pw-secret",
+    )
+    assert s.oauth2_client_secret == "pw-secret" and "pw-secret" not in repr(s)
+    # a profile's own secret wins over the password
+    s2 = settings_from_query(
+        {"auth_profile": "flight"}, CFG, env={"SEC": "from-profile"}, password="pw"
+    )
+    assert s2.oauth2_client_secret == "from-profile"
+
+
 def test_require_names_missing_key():
     s = AuthSettings("oauth2", None, "client_credentials", None, "cid", "x", None, None)
     with pytest.raises(ArgumentError, match="auth=oauth2 requires oauth2_token_url"):
@@ -157,3 +202,44 @@ def test_token_source_for_is_shared_per_settings():
     )
     assert token_source_for(a) is token_source_for(b)
     assert token_source_for(a) is not token_source_for(c)
+
+
+def test_token_source_cache_distinguishes_secrets():
+    from sqlalchemy_adbc.auth import token_source_for
+
+    a = AuthSettings(
+        "oauth2", None, "client_credentials", "https://idp/t", "cid", "right", None, None
+    )
+    b = AuthSettings(
+        "oauth2", None, "client_credentials", "https://idp/t", "cid", "wrong", None, None
+    )
+    assert token_source_for(a) is not token_source_for(b)
+
+
+def test_token_url_must_be_https_unless_loopback():
+    with pytest.raises(ArgumentError, match="must use https"):
+        OAuth2ClientCredentials("http://idp.example/token", "cid", "s").token()
+    # 127.0.0.1 over http is allowed (the test fixture relies on it)
+
+
+def test_token_request_refuses_redirects(token_server):
+    hits = []
+
+    class Redirecting(BaseHTTPRequestHandler):
+        def do_POST(self):
+            hits.append(self.path)
+            self.send_response(302)
+            self.send_header("Location", token_server["url"])
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), Redirecting)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with pytest.raises(ArgumentError, match="HTTP 302"):
+            OAuth2ClientCredentials(f"http://127.0.0.1:{srv.server_port}/t", "cid", "s").token()
+        assert hits == ["/t"] and token_server["requests"] == []  # credentials never forwarded
+    finally:
+        srv.shutdown()
