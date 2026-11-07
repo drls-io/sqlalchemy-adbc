@@ -68,14 +68,19 @@ _TYPE_MAP: dict[str, type[sa_types.TypeEngine[Any]]] = {
 def adbc_type_to_sqla(
     type_name: str | None,
     *,
-    ischema_names: dict[str, type[sa_types.TypeEngine[Any]]] | None = None,
+    ischema_names: dict[str, Any] | None = None,
+    size: int | None = None,
+    decimal_digits: int | None = None,
 ) -> sa_types.TypeEngine[Any]:
     """Map an ADBC ``xdbc_type_name`` to a SQLAlchemy type instance.
 
     ``ischema_names`` is an optional per-dialect type registry merged
     on top of the generic map — Postgres passes its ``pg_ischema_names``
     so JSONB/UUID/etc. reflect to typed decorators rather than falling
-    through to Text/String.
+    through to Text/String. An entry is either a type class, instantiated
+    bare, or a factory ``f(size, decimal_digits)`` that can carry the
+    driver's ``xdbc_column_size`` / ``xdbc_decimal_digits`` into the type
+    (Snowflake ``NUMBER(38,0)`` → ``NUMBER(precision=38, scale=0)``).
     """
     if not type_name:
         return sa_types.NullType()
@@ -85,9 +90,11 @@ def adbc_type_to_sqla(
     # Dialect-specific overrides win over the generic map — this is how
     # JSONB reflects to our TypeDecorator instead of plain Text.
     if ischema_names is not None:
-        dialect_cls = ischema_names.get(base) or ischema_names.get(normalized)
-        if dialect_cls is not None:
-            return dialect_cls()
+        entry = ischema_names.get(base) or ischema_names.get(normalized)
+        if entry is not None:
+            if isinstance(entry, type):
+                return entry()
+            return entry(size, decimal_digits)
     cls = _TYPE_MAP.get(base) or _TYPE_MAP.get(normalized)
     if cls is None:
         return sa_types.NullType()
@@ -152,7 +159,7 @@ def find_table(
 def columns_from_table(
     tbl: dict[str, Any],
     *,
-    ischema_names: dict[str, type[sa_types.TypeEngine[Any]]] | None = None,
+    ischema_names: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Project ADBC table_columns → SQLAlchemy ``get_columns`` shape.
 
@@ -181,7 +188,12 @@ def columns_from_table(
         out.append(
             {
                 "name": name,
-                "type": adbc_type_to_sqla(col.get("xdbc_type_name"), ischema_names=ischema_names),
+                "type": adbc_type_to_sqla(
+                    col.get("xdbc_type_name"),
+                    ischema_names=ischema_names,
+                    size=col.get("xdbc_column_size"),
+                    decimal_digits=col.get("xdbc_decimal_digits"),
+                ),
                 "nullable": nullable,
                 "default": col.get("xdbc_column_def"),
                 "autoincrement": bool(col.get("xdbc_is_autoincrement")) or "auto",
