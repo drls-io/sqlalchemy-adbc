@@ -15,12 +15,14 @@ Subclasses implement:
 
 from __future__ import annotations
 
+import collections
 import importlib
 import warnings
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 from sqlalchemy.engine import reflection as sa_reflection
-from sqlalchemy.engine.default import DefaultDialect
+from sqlalchemy.engine.default import DefaultDialect, DefaultExecutionContext
 from sqlalchemy.engine.interfaces import (
     ReflectedColumn,
     ReflectedForeignKeyConstraint,
@@ -29,6 +31,104 @@ from sqlalchemy.engine.interfaces import (
     ReflectedUniqueConstraint,
 )
 from sqlalchemy.engine.url import URL
+
+
+class ColumnwiseCursor:
+    """DBAPI cursor proxy that converts Arrow batches column-wise.
+
+    The ADBC DBAPI cursor builds every row cell by cell (``arr[i].as_py()``
+    in ``fetchone``; ``fetchmany`` and ``fetchall`` loop over it). pyarrow's
+    per-column ``to_pylist`` is an order of magnitude faster and yields the
+    same Python values. The proxy serves PEP 249 fetch calls from a buffer
+    filled one record batch at a time, so ``fetchmany`` streams and memory
+    stays bounded. Everything else is forwarded to the wrapped cursor.
+    """
+
+    def __init__(self, cursor: Any) -> None:
+        self._cursor = cursor
+        self._reader: Any = None
+        self._rows: collections.deque[tuple[Any, ...]] = collections.deque()
+        self._exhausted = False
+
+    def _reset(self) -> None:
+        self._reader = None
+        self._rows.clear()
+        self._exhausted = False
+
+    def execute(self, operation: Any, parameters: Any = None) -> Any:
+        self._reset()
+        if parameters is None:
+            return self._cursor.execute(operation)
+        return self._cursor.execute(operation, parameters)
+
+    def executemany(self, operation: Any, seq_of_parameters: Any) -> Any:
+        self._reset()
+        return self._cursor.executemany(operation, seq_of_parameters)
+
+    def _fill(self, want: int | None) -> None:
+        """Convert batches until the buffer holds ``want`` rows, or all of them."""
+        if self._exhausted:
+            return
+        if self._reader is None:
+            self._reader = self._cursor.fetch_record_batch()
+        while want is None or len(self._rows) < want:
+            try:
+                batch = self._reader.read_next_batch()
+            except StopIteration:
+                self._exhausted = True
+                return
+            if batch.num_rows:
+                self._rows.extend(zip(*(col.to_pylist() for col in batch.columns), strict=True))
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        self._fill(1)
+        return self._rows.popleft() if self._rows else None
+
+    def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
+        if size is None:
+            size = self.arraysize
+        self._fill(size)
+        return [self._rows.popleft() for _ in range(min(size, len(self._rows)))]
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        self._fill(None)
+        rows = list(self._rows)
+        self._rows.clear()
+        return rows
+
+    def __iter__(self) -> Iterator[tuple[Any, ...]]:
+        while (row := self.fetchone()) is not None:
+            yield row
+
+    @property
+    def arraysize(self) -> int:
+        return int(self._cursor.arraysize)
+
+    @arraysize.setter
+    def arraysize(self, value: int) -> None:
+        self._cursor.arraysize = value
+
+    @property
+    def description(self) -> Sequence[Any] | None:
+        return self._cursor.description
+
+    @property
+    def rowcount(self) -> int:
+        return int(self._cursor.rowcount)
+
+    def close(self) -> None:
+        self._reader = None
+        self._rows.clear()
+        self._cursor.close()
+
+    def __getattr__(self, name: str) -> Any:
+        # Arrow fetch methods, adbc_* extensions, setinputsizes, ...
+        return getattr(self._cursor, name)
+
+
+class ADBCExecutionContext(DefaultExecutionContext):
+    def create_default_cursor(self) -> Any:
+        return ColumnwiseCursor(self._dbapi_connection.cursor())
 
 
 class ADBCDialect(DefaultDialect):
@@ -48,6 +148,7 @@ class ADBCDialect(DefaultDialect):
     # backend they target ("sqlite", "postgresql", ...).
     name = "adbc"
     driver = "adbc"
+    execution_ctx_cls = ADBCExecutionContext
     supports_statement_cache = True
     supports_sane_rowcount = False
     supports_sane_multi_rowcount = False
