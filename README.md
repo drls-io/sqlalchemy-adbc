@@ -104,13 +104,19 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   backend DDL impls via standard dialect-name lookup
 - URL forms for Flight SQL, PostgreSQL, SQLite, Snowflake, BigQuery
   with correct special-character escaping in passwords
+- PostgreSQL typed decorators: JSONB / JSON / UUID / INET / CIDR /
+  MACADDR, and all range and multirange types (`int4range` …
+  `tstzmultirange`) plus `hstore`, returning SQLAlchemy's own
+  `Range` / `MultiRange` / `dict` with working `@>`, `&&`, `?`
+  operators and reflection
 
 ### Known limitations
 
-- **PostgreSQL range types** (tstzrange, tstzmultirange, int4range,
-  …) and **hstore** — not yet mapped to typed decorators; returned
-  as raw strings. JSONB / JSON / UUID / INET / CIDR / MACADDR /
-  MACADDR8 all round-trip through typed decorators as of 0.3.0
+- **Raw SQL readers see PostgreSQL range / hstore values as bytes** —
+  `pd.read_sql("SELECT period FROM t", engine)` and SQL Lab style
+  queries carry no column type information, so the ADBC binary form
+  reaches Python untouched. Typed columns via Core, ORM or reflection
+  are decoded
   ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
 - **Drivers exercised in CI** — SQLite fully, PostgreSQL
   integration-tested via service container. Snowflake / BigQuery /
@@ -122,7 +128,7 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   column reflects as nullable=True
   ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13))
 
-Tests: 121 passing on Python 3.10–3.13, including 17 PostgreSQL
+Tests: 180 passing on Python 3.10–3.13, including 32 PostgreSQL
 integration tests against a service-container Postgres.
 
 ## Development
