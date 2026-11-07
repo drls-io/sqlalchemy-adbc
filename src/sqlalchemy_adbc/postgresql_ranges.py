@@ -291,3 +291,60 @@ class DATERANGE(_RangeType):
     impl = pg.DATERANGE
     cache_ok = True
     codec = DATE_CODEC
+
+
+class _MultiRangeType(_RangeType):
+    """Multirange: a ``MultiRange`` (or plain ``list[Range]``) in Python."""
+
+    cache_ok = True
+
+    def coerce_compared_value(self, op: Any, value: Any) -> sa_types.TypeEngine[Any]:
+        if isinstance(value, (list, Range)):
+            return self
+        return _ElementCast(self.codec.sql_type)
+
+    def process_bind_param(self, value: Any, dialect: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, Range):
+            value = [value]
+        return format_multirange(value, self.codec)
+
+    def process_result_value(self, value: Any, dialect: Any) -> Any:
+        return None if value is None else parse_multirange(value, self.codec)
+
+
+class INT4MULTIRANGE(_MultiRangeType):
+    impl = pg.INT4MULTIRANGE
+    cache_ok = True
+    codec = INT_CODEC
+
+
+class INT8MULTIRANGE(_MultiRangeType):
+    impl = pg.INT8MULTIRANGE
+    cache_ok = True
+    codec = BIGINT_CODEC
+
+
+class NUMMULTIRANGE(_MultiRangeType):
+    impl = pg.NUMMULTIRANGE
+    cache_ok = True
+    codec = NUMERIC_CODEC
+
+
+class TSMULTIRANGE(_MultiRangeType):
+    impl = pg.TSMULTIRANGE
+    cache_ok = True
+    codec = TIMESTAMP_CODEC
+
+
+class TSTZMULTIRANGE(_MultiRangeType):
+    impl = pg.TSTZMULTIRANGE
+    cache_ok = True
+    codec = TIMESTAMPTZ_CODEC
+
+
+class DATEMULTIRANGE(_MultiRangeType):
+    impl = pg.DATEMULTIRANGE
+    cache_ok = True
+    codec = DATE_CODEC

@@ -31,14 +31,20 @@ import uuid
 from typing import Any
 
 from sqlalchemy import types as sa_types
-from sqlalchemy.dialects.postgresql import Range
+from sqlalchemy.dialects.postgresql import MultiRange, Range
 
 from sqlalchemy_adbc.postgresql_ranges import (
+    DATEMULTIRANGE,
     DATERANGE,
+    INT4MULTIRANGE,
     INT4RANGE,
+    INT8MULTIRANGE,
     INT8RANGE,
+    NUMMULTIRANGE,
     NUMRANGE,
+    TSMULTIRANGE,
     TSRANGE,
+    TSTZMULTIRANGE,
     TSTZRANGE,
 )
 
@@ -164,20 +170,33 @@ pg_ischema_names: dict[str, type[sa_types.TypeEngine[Any]]] = {
     "TSRANGE": TSRANGE,
     "TSTZRANGE": TSTZRANGE,
     "DATERANGE": DATERANGE,
+    "INT4MULTIRANGE": INT4MULTIRANGE,
+    "INT8MULTIRANGE": INT8MULTIRANGE,
+    "NUMMULTIRANGE": NUMMULTIRANGE,
+    "TSMULTIRANGE": TSMULTIRANGE,
+    "TSTZMULTIRANGE": TSTZMULTIRANGE,
+    "DATEMULTIRANGE": DATEMULTIRANGE,
 }
 
 __all__ = [
     "CIDR",
+    "DATEMULTIRANGE",
     "DATERANGE",
     "INET",
+    "INT4MULTIRANGE",
     "INT4RANGE",
+    "INT8MULTIRANGE",
     "INT8RANGE",
     "JSON",
     "JSONB",
     "MACADDR",
+    "MultiRange",
+    "NUMMULTIRANGE",
     "NUMRANGE",
     "Range",
+    "TSMULTIRANGE",
     "TSRANGE",
+    "TSTZMULTIRANGE",
     "TSTZRANGE",
     "UUID",
     "pg_ischema_names",

@@ -191,5 +191,37 @@ def test_range_decorators_registered_and_compile_with_casts():
 def test_every_range_decorator_declares_cache_ok():
     from sqlalchemy_adbc import postgresql_types as m
 
-    for name in ["INT4RANGE", "INT8RANGE", "NUMRANGE", "TSRANGE", "TSTZRANGE", "DATERANGE"]:
+    for name in [
+        "INT4RANGE",
+        "INT8RANGE",
+        "NUMRANGE",
+        "TSRANGE",
+        "TSTZRANGE",
+        "DATERANGE",
+        "INT4MULTIRANGE",
+        "INT8MULTIRANGE",
+        "NUMMULTIRANGE",
+        "TSMULTIRANGE",
+        "TSTZMULTIRANGE",
+        "DATEMULTIRANGE",
+    ]:
         assert getattr(m, name).__dict__.get("cache_ok") is True, name
+
+
+# ── Task 5: multirange decorators ────────────────────────────────────
+
+
+def test_multirange_registered_and_binds_lists():
+    from sqlalchemy_adbc.postgresql_types import INT4MULTIRANGE, TSTZMULTIRANGE
+
+    d = ADBCPostgreSQLDialect()
+    assert pg_ischema_names["TSTZMULTIRANGE"] is TSTZMULTIRANGE
+    t = sa.Table("t", sa.MetaData(), sa.Column("m", INT4MULTIRANGE))
+    where = str(sa.select(t.c.m).where(t.c.m.contains(12)).compile(dialect=d))
+    assert "@> CAST(" in where and "AS INTEGER)" in where
+    where_m = str(
+        sa.select(t.c.m).where(t.c.m.contains([Range(1, 2, bounds="[)")])).compile(dialect=d)
+    )
+    assert "AS INT4MULTIRANGE)" in where_m
+    assert INT4MULTIRANGE().process_bind_param([Range(1, 2, bounds="[)")], d) == "{[1,2)}"
+    assert INT4MULTIRANGE().process_result_value("{}", d) == MultiRange([])

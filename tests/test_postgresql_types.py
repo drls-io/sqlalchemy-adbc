@@ -27,7 +27,7 @@ from decimal import Decimal
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import inspect
-from sqlalchemy.dialects.postgresql import Range
+from sqlalchemy.dialects.postgresql import MultiRange, Range
 
 UTC = dt.timezone.utc
 
@@ -425,3 +425,33 @@ def test_range_roundtrip_operators_and_reflection(engine, decorator, pgtype, val
         assert isinstance(sa.Table(name, sa.MetaData(), autoload_with=engine).c.r.type, cls)
     finally:
         _drop_table(engine, name)
+
+
+def test_multirange_roundtrip_and_reflection(engine):
+    _drop_table(engine, "t_mr")
+    t = sa.Table(
+        "t_mr",
+        sa.MetaData(),
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("m", pgtypes.INT4MULTIRANGE),
+    )
+    t.create(engine)
+    try:
+        values = [
+            MultiRange([Range(1, 5, bounds="[)"), Range(10, 20, bounds="[)")]),
+            MultiRange([]),
+            None,
+            [Range(30, 40, bounds="[)")],  # plain list binds too
+        ]
+        with engine.begin() as c:
+            c.execute(t.insert(), [{"id": i, "m": v} for i, v in enumerate(values)])
+        with engine.connect() as c:
+            back = [r.m for r in c.execute(sa.select(t).order_by(t.c.id))]
+        assert back[0] == values[0] and back[1] == MultiRange([]) and back[2] is None
+        assert back[3] == MultiRange(values[3])
+        assert all(isinstance(b, MultiRange) for b in back if b is not None)
+        with engine.connect() as c:
+            assert c.execute(sa.select(t.c.id).where(t.c.m.contains(12))).scalars().all() == [0]
+        assert isinstance(inspect(engine).get_columns("t_mr")[1]["type"], pgtypes.INT4MULTIRANGE)
+    finally:
+        _drop_table(engine, "t_mr")
