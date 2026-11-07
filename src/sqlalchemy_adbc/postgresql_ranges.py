@@ -348,3 +348,28 @@ class DATEMULTIRANGE(_MultiRangeType):
     impl = pg.DATEMULTIRANGE
     cache_ok = True
     codec = DATE_CODEC
+
+
+class HSTORE(sa_types.TypeDecorator[Any]):
+    """``hstore`` ⇄ ``dict[str, str | None]``.
+
+    Same cast pattern as the ranges: PG text on read, ``CAST(:p AS HSTORE)``
+    on bind. The ``impl``, SQLAlchemy's own ``HSTORE``, already parses and
+    serialises the text form on dialects without native hstore support, so
+    no ``process_*`` hooks are needed here (adding them would decode twice).
+    """
+
+    impl = pg.HSTORE
+    cache_ok = True
+
+    def bind_expression(self, bindvalue: Any) -> Any:
+        return sa.cast(bindvalue, pg.HSTORE)
+
+    def column_expression(self, colexpr: Any) -> Any:
+        return sa.type_coerce(sa.cast(colexpr, sa_types.Text), self)
+
+    def coerce_compared_value(self, op: Any, value: Any) -> sa_types.TypeEngine[Any]:
+        # ``h ? 'key'`` and friends take text operands; only a dict is an hstore.
+        if isinstance(value, dict):
+            return self
+        return self.impl_instance.coerce_compared_value(op, value)

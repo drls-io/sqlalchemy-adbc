@@ -36,6 +36,7 @@ from sqlalchemy.dialects.postgresql import MultiRange, Range
 from sqlalchemy_adbc.postgresql_ranges import (
     DATEMULTIRANGE,
     DATERANGE,
+    HSTORE,
     INT4MULTIRANGE,
     INT4RANGE,
     INT8MULTIRANGE,
@@ -176,12 +177,14 @@ pg_ischema_names: dict[str, type[sa_types.TypeEngine[Any]]] = {
     "TSMULTIRANGE": TSMULTIRANGE,
     "TSTZMULTIRANGE": TSTZMULTIRANGE,
     "DATEMULTIRANGE": DATEMULTIRANGE,
+    "HSTORE": HSTORE,
 }
 
 __all__ = [
     "CIDR",
     "DATEMULTIRANGE",
     "DATERANGE",
+    "HSTORE",
     "INET",
     "INT4MULTIRANGE",
     "INT4RANGE",

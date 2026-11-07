@@ -455,3 +455,26 @@ def test_multirange_roundtrip_and_reflection(engine):
         assert isinstance(inspect(engine).get_columns("t_mr")[1]["type"], pgtypes.INT4MULTIRANGE)
     finally:
         _drop_table(engine, "t_mr")
+
+
+def test_hstore_roundtrip_and_reflection(engine):
+    _drop_table(engine, "t_hs")
+    with engine.begin() as c:
+        c.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS hstore")
+    t = sa.Table(
+        "t_hs",
+        sa.MetaData(),
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("h", pgtypes.HSTORE),
+    )
+    t.create(engine)
+    try:
+        values = [{"a": "1", "b c": 'x=>y "q" \\ back', "n": None}, {}, None]
+        with engine.begin() as c:
+            c.execute(t.insert(), [{"id": i, "h": v} for i, v in enumerate(values)])
+        with engine.connect() as c:
+            assert [r.h for r in c.execute(sa.select(t).order_by(t.c.id))] == values  # RF 5
+            assert c.execute(sa.select(t.c.id).where(t.c.h.has_key("a"))).scalars().all() == [0]
+        assert isinstance(inspect(engine).get_columns("t_hs")[1]["type"], pgtypes.HSTORE)
+    finally:
+        _drop_table(engine, "t_hs")

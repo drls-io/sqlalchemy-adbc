@@ -225,3 +225,28 @@ def test_multirange_registered_and_binds_lists():
     assert "AS INT4MULTIRANGE)" in where_m
     assert INT4MULTIRANGE().process_bind_param([Range(1, 2, bounds="[)")], d) == "{[1,2)}"
     assert INT4MULTIRANGE().process_result_value("{}", d) == MultiRange([])
+
+
+# ── Task 6: HSTORE ───────────────────────────────────────────────────
+
+
+def test_hstore_uses_sqlalchemy_codec():
+    from sqlalchemy_adbc import postgresql_types as pgtypes
+
+    d = ADBCPostgreSQLDialect()
+    h = pgtypes.HSTORE()
+    read = h.result_processor(d, None)  # full chain, as a result row would run it
+    assert read('"a"=>"1", "n"=>NULL, "b c"=>"x=>y"') == {"a": "1", "n": None, "b c": "x=>y"}
+    assert read("") == {} and read(None) is None
+    bind = h.bind_processor(d)
+    assert bind({"a": "1", "n": None}) == '"a"=>"1", "n"=>NULL'
+    assert bind(None) is None
+    assert pg_ischema_names["HSTORE"] is pgtypes.HSTORE
+    assert pgtypes.HSTORE.__dict__.get("cache_ok") is True
+    t = sa.Table("t", sa.MetaData(), sa.Column("h", pgtypes.HSTORE))
+    assert "CAST(t.h AS TEXT) AS h" in str(sa.select(t).compile(dialect=d))
+    assert "AS HSTORE)" in str(t.insert().values(h={"a": "1"}).compile(dialect=d))
+    has_key = str(sa.select(t.c.h).where(t.c.h.has_key("a")).compile(dialect=d))
+    assert "?" in has_key and "AS HSTORE)" not in has_key
+    contains = str(sa.select(t.c.h).where(t.c.h.contains({"a": "1"})).compile(dialect=d))
+    assert "@> CAST(" in contains and "AS HSTORE)" in contains
