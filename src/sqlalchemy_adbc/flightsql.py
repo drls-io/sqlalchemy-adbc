@@ -15,11 +15,23 @@ dialect also understands a few shorthands:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from sqlalchemy.engine.url import URL
+from sqlalchemy.exc import ArgumentError
 
+from sqlalchemy_adbc.auth import negotiate_header, require, settings_from_query
 from sqlalchemy_adbc.base import ADBCDialect
+from sqlalchemy_adbc.config import load_config
+
+# Driver option names (adbc-driver-flightsql >= 1.13); spelled out so the
+# package stays importable without the driver extra.
+_OAUTH_FLOW = "adbc.flight.sql.oauth.flow"
+_OAUTH_TOKEN_URI = "adbc.flight.sql.oauth.token_uri"
+_OAUTH_CLIENT_ID = "adbc.flight.sql.oauth.client_id"
+_OAUTH_CLIENT_SECRET = "adbc.flight.sql.oauth.client_secret"
+_OAUTH_SCOPE = "adbc.flight.sql.oauth.scope"
 
 
 class ADBCFlightSQLDialect(ADBCDialect):
@@ -38,6 +50,12 @@ class ADBCFlightSQLDialect(ADBCDialect):
         # for repeated keys we keep the last (typical shell + HTTP layer
         # behavior) rather than silently dropping them.
         query: dict[str, str] = {k: _scalar(v) for k, v in url.query.items()}
+
+        # auth / auth_profile / oauth2_* / spn leave the query here, before
+        # the remainder is passed through to the driver verbatim.
+        settings = settings_from_query(query, load_config(), password=url.password)
+        if settings.type == "oauth2" and not settings.oauth2_client_id and url.username:
+            settings = replace(settings, oauth2_client_id=url.username)
 
         # TLS defaults to ON — Flight SQL is typically exposed as a
         # public service (e.g., flight-sql.drls.io), and a bearer token
@@ -65,15 +83,34 @@ class ADBCFlightSQLDialect(ADBCDialect):
             auth_key = "adbc.flight.sql.authorization_header"
             header_prefix = "adbc.flight.sql.rpc.call_header."
 
-        if "authorization" in query:
-            db_kwargs[auth_key] = query.pop("authorization")
-
-        # Caller can also set the bearer via SQLAlchemy URL password:
-        #     flightsql+adbc://user:<token>@host:443?tls=true
-        # The "user" part is ignored by Flight SQL; we just read the
-        # password into the Authorization header.
-        if url.password:
-            db_kwargs[auth_key] = f"Bearer {url.password}"
+        if settings.type in (None, "bearer"):
+            if "authorization" in query:
+                db_kwargs[auth_key] = query.pop("authorization")
+            # Default mode: the URL password is a bearer token.
+            #     flightsql+adbc://user:<token>@host:443?tls=true
+            # The "user" part is ignored by Flight SQL.
+            if url.password:
+                db_kwargs[auth_key] = f"Bearer {url.password}"
+        elif settings.type == "basic":
+            # Handshake basic auth, as the Flight SQL JDBC driver does it.
+            if not url.username:
+                raise ArgumentError("auth=basic requires username")
+            if not url.password:
+                raise ArgumentError("auth=basic requires password")
+            db_kwargs["username"] = url.username
+            db_kwargs["password"] = url.password
+        elif settings.type == "negotiate":
+            db_kwargs[auth_key] = negotiate_header(settings.spn or f"HTTP@{host}")
+        elif settings.type == "oauth2":
+            # The driver runs the OAuth2 flow itself and refreshes tokens.
+            require(settings, "oauth2_token_url", "oauth2_client_id", "oauth2_client_secret")
+            db_kwargs[_OAUTH_FLOW] = settings.oauth2_flow
+            db_kwargs[_OAUTH_TOKEN_URI] = str(settings.oauth2_token_url)
+            db_kwargs[_OAUTH_CLIENT_ID] = str(settings.oauth2_client_id)
+            db_kwargs[_OAUTH_CLIENT_SECRET] = str(settings.oauth2_client_secret)
+            if settings.oauth2_scope:
+                db_kwargs[_OAUTH_SCOPE] = settings.oauth2_scope
+            query.pop("authorization", None)
 
         # header.x-workspace-id=abc → <prefix>x-workspace-id: abc
         for key in list(query.keys()):
