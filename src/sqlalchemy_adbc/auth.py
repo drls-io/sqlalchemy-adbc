@@ -306,3 +306,33 @@ def token_source_for(settings: AuthSettings) -> OAuth2ClientCredentials:
             )
             _sources[key] = source
         return source
+
+
+# ── Negotiate (Kerberos / SPNEGO) ────────────────────────────────────
+
+
+def negotiate_header(spn: str, *, client_factory: Callable[..., Any] | None = None) -> str:
+    """``Authorization`` value for Kerberos/SPNEGO: ``Negotiate <base64 token>``.
+
+    ``spn`` is ``SERVICE@hostname`` (``HTTP@flight.example``). Single-leg:
+    the client's initial token is enough for Kerberos. Uses the system
+    GSSAPI/SSPI credential cache through ``pyspnego`` (extra ``kerberos``);
+    a fresh context per connection, which is cheap.
+    """
+    service, sep, hostname = spn.partition("@")
+    if not sep or not service or not hostname:
+        raise ArgumentError(f"spn must look like SERVICE@hostname, got {spn!r}")
+    if client_factory is None:
+        try:
+            import spnego
+        except ImportError:
+            raise ArgumentError(
+                "auth=negotiate requires the 'kerberos' extra: "
+                "pip install 'sqlalchemy-adbc[kerberos]'"
+            ) from None
+        client_factory = spnego.client
+    context = client_factory(hostname=hostname, service=service, protocol="negotiate")
+    token = context.step(None)
+    if not token:
+        raise ArgumentError("SPNEGO produced no initial token; is there a Kerberos ticket?")
+    return "Negotiate " + base64.b64encode(token).decode()

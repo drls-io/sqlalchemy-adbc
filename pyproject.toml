@@ -41,6 +41,8 @@ postgresql = ["adbc-driver-postgresql>=1.0"]
 sqlite = ["adbc-driver-sqlite>=1.0"]
 snowflake = ["adbc-driver-snowflake>=1.0"]
 bigquery = ["adbc-driver-bigquery>=1.0"]
+# Kerberos / SPNEGO (auth=negotiate) on Flight SQL.
+kerberos = ["pyspnego>=0.10"]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",

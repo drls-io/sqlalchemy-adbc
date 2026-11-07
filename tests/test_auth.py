@@ -243,3 +243,46 @@ def test_token_request_refuses_redirects(token_server):
         assert hits == ["/t"] and token_server["requests"] == []  # credentials never forwarded
     finally:
         srv.shutdown()
+
+
+# ── Negotiate (Kerberos / SPNEGO) ────────────────────────────────────
+
+from sqlalchemy_adbc.auth import negotiate_header  # noqa: E402
+
+
+def test_negotiate_header_from_spnego_context():
+    calls: dict = {}
+
+    class FakeCtx:
+        def step(self, in_token=None):
+            calls["in"] = in_token
+            return b"\x60\x01\x02"
+
+    def factory(**kw):
+        calls["kw"] = kw
+        return FakeCtx()
+
+    h = negotiate_header("HTTP@flight.example", client_factory=factory)
+    assert h == "Negotiate " + base64.b64encode(b"\x60\x01\x02").decode()
+    assert calls["kw"] == {"hostname": "flight.example", "service": "HTTP", "protocol": "negotiate"}
+    assert calls["in"] is None
+
+
+def test_negotiate_without_pyspnego_names_extra(monkeypatch):
+    import builtins
+
+    real = builtins.__import__
+
+    def fake(name, *a, **k):
+        if name == "spnego":
+            raise ImportError("no spnego")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake)
+    with pytest.raises(ArgumentError, match=r"sqlalchemy-adbc\[kerberos\]"):
+        negotiate_header("HTTP@h")
+
+
+def test_negotiate_rejects_malformed_spn():
+    with pytest.raises(ArgumentError, match="spn"):
+        negotiate_header("flight.example", client_factory=lambda **kw: None)
