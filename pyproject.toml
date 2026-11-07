@@ -108,6 +108,7 @@ follow_imports = "silent"
 [[tool.mypy.overrides]]
 module = [
     "tomli",  # only imported on Python < 3.11
+    "spnego.*",  # optional `kerberos` extra, imported lazily
     "adbc_driver_manager.*",
     "adbc_driver_flightsql.*",
     "adbc_driver_postgresql.*",
