@@ -98,6 +98,12 @@ follow_imports = "silent"
 
 # ADBC driver wheels don't ship type stubs; lazy imports in the dialect
 # modules guard on ImportError so we only pay the type-ignore cost here.
+
+# pyarrow ships no stubs / py.typed.
+[[tool.mypy.overrides]]
+module = "pyarrow.*"
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]
 module = [
     "adbc_driver_manager.*",
