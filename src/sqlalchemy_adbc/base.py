@@ -19,6 +19,7 @@ import importlib
 import warnings
 from typing import Any
 
+from sqlalchemy.engine import reflection as sa_reflection
 from sqlalchemy.engine.default import DefaultDialect
 from sqlalchemy.engine.interfaces import (
     ReflectedColumn,
@@ -142,10 +143,12 @@ class ADBCDialect(DefaultDialect):
     # helpers in `reflection.py`.
     #
     # Design notes:
-    # - We call `adbc_get_objects` per-Inspector-call rather than
-    #   caching. The metadata payload is small for the narrow filter
-    #   (one table, one schema) and caching across connection lifetimes
-    #   is a footgun when the schema evolves under us.
+    # - The catalog tree is cached per Inspector through SQLAlchemy's
+    #   `info_cache`, keyed on (schema, table_name, depth). One autoload
+    #   touches five or six reflection methods; without the cache each
+    #   re-fetched the tree (4-10 s per fetch on Snowflake). The cache
+    #   dies with the Inspector, so schema changes are seen by the next
+    #   `inspect()`.
     # - `table_name_filter` and `db_schema_filter` narrow the ADBC
     #   query, so even large catalogs don't materialize every table
     #   just to inspect one.
@@ -159,6 +162,7 @@ class ADBCDialect(DefaultDialect):
         # already passed the DBAPI connection directly.
         return getattr(raw, "driver_connection", None) or getattr(raw, "connection", raw)
 
+    @sa_reflection.cache
     def _tree(
         self,
         connection: Any,
@@ -166,7 +170,10 @@ class ADBCDialect(DefaultDialect):
         schema: str | None = None,
         table_name: str | None = None,
         depth: str = "all",
+        info_cache: dict[Any, Any] | None = None,
     ) -> list[dict[str, Any]]:
+        # `info_cache` is consumed by the decorator; it is part of the
+        # signature so the Inspector's cache dict reaches it.
         from sqlalchemy_adbc import reflection
 
         dbapi = self._adbc_connection(connection)
@@ -180,13 +187,15 @@ class ADBCDialect(DefaultDialect):
     def get_schema_names(self, connection: Any, **kw: Any) -> list[str]:
         from sqlalchemy_adbc import reflection
 
-        return reflection.schema_names_from_tree(self._tree(connection, depth="db_schemas"))
+        return reflection.schema_names_from_tree(
+            self._tree(connection, info_cache=kw.get("info_cache"), depth="db_schemas")
+        )
 
     def get_table_names(self, connection: Any, schema: str | None = None, **kw: Any) -> list[str]:
         from sqlalchemy_adbc import reflection
 
         return reflection.table_names_from_tree(
-            self._tree(connection, schema=schema, depth="tables"),
+            self._tree(connection, info_cache=kw.get("info_cache"), schema=schema, depth="tables"),
             schema=schema,
         )
 
@@ -194,7 +203,7 @@ class ADBCDialect(DefaultDialect):
         from sqlalchemy_adbc import reflection
 
         return reflection.view_names_from_tree(
-            self._tree(connection, schema=schema, depth="tables"),
+            self._tree(connection, info_cache=kw.get("info_cache"), schema=schema, depth="tables"),
             schema=schema,
         )
 
@@ -203,7 +212,9 @@ class ADBCDialect(DefaultDialect):
     ) -> list[ReflectedColumn]:
         from sqlalchemy_adbc import reflection
 
-        tree = self._tree(connection, schema=schema, table_name=table_name)
+        tree = self._tree(
+            connection, info_cache=kw.get("info_cache"), schema=schema, table_name=table_name
+        )
         tbl = reflection.find_table(tree, table_name, schema=schema)
         if tbl is None:
             return []
@@ -214,7 +225,9 @@ class ADBCDialect(DefaultDialect):
     ) -> ReflectedPrimaryKeyConstraint:
         from sqlalchemy_adbc import reflection
 
-        tree = self._tree(connection, schema=schema, table_name=table_name)
+        tree = self._tree(
+            connection, info_cache=kw.get("info_cache"), schema=schema, table_name=table_name
+        )
         tbl = reflection.find_table(tree, table_name, schema=schema)
         if tbl is None:
             return {"constrained_columns": [], "name": None}
@@ -225,7 +238,9 @@ class ADBCDialect(DefaultDialect):
     ) -> list[ReflectedForeignKeyConstraint]:
         from sqlalchemy_adbc import reflection
 
-        tree = self._tree(connection, schema=schema, table_name=table_name)
+        tree = self._tree(
+            connection, info_cache=kw.get("info_cache"), schema=schema, table_name=table_name
+        )
         tbl = reflection.find_table(tree, table_name, schema=schema)
         if tbl is None:
             return []
@@ -236,7 +251,9 @@ class ADBCDialect(DefaultDialect):
     ) -> list[ReflectedUniqueConstraint]:
         from sqlalchemy_adbc import reflection
 
-        tree = self._tree(connection, schema=schema, table_name=table_name)
+        tree = self._tree(
+            connection, info_cache=kw.get("info_cache"), schema=schema, table_name=table_name
+        )
         tbl = reflection.find_table(tree, table_name, schema=schema)
         if tbl is None:
             return []
@@ -250,7 +267,9 @@ class ADBCDialect(DefaultDialect):
         # can override with a native query (sqlite_master, pg_indexes).
         from sqlalchemy_adbc import reflection
 
-        tree = self._tree(connection, schema=schema, table_name=table_name)
+        tree = self._tree(
+            connection, info_cache=kw.get("info_cache"), schema=schema, table_name=table_name
+        )
         tbl = reflection.find_table(tree, table_name, schema=schema)
         if tbl is None:
             return []
@@ -261,5 +280,11 @@ class ADBCDialect(DefaultDialect):
     ) -> bool:
         from sqlalchemy_adbc import reflection
 
-        tree = self._tree(connection, schema=schema, table_name=table_name, depth="tables")
+        tree = self._tree(
+            connection,
+            info_cache=kw.get("info_cache"),
+            schema=schema,
+            table_name=table_name,
+            depth="tables",
+        )
         return reflection.find_table(tree, table_name, schema=schema) is not None

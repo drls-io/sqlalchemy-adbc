@@ -469,3 +469,78 @@ def test_find_table_skips_indexes():
     got = find_table(tree, "foo")
     assert got is not None
     assert got["table_type"] == "table"
+
+
+# ── Catalog fetch caching (issue #11, finding C) ─────────────────────
+#
+# SQLAlchemy hands every dialect reflection method an ``info_cache`` that
+# lives for one Inspector. Reflecting a table calls five or six of those
+# methods; each used to fetch the ADBC catalog tree again. On Snowflake a
+# fetch costs 4–10 s, so one autoload took 40 s. The tree is now cached
+# per Inspector keyed on (schema, table_name, depth).
+
+
+@pytest.fixture
+def count_fetches(monkeypatch):
+    from sqlalchemy_adbc import reflection
+
+    calls: list[dict[str, Any]] = []
+    real = reflection.get_objects_tree
+
+    def counting(dbapi, **kw):
+        calls.append(kw)
+        return real(dbapi, **kw)
+
+    monkeypatch.setattr(reflection, "get_objects_tree", counting)
+    return calls
+
+
+def test_table_autoload_fetches_catalog_once_per_table(count_fetches):
+    engine = _make_engine()
+    _seed(engine)
+    count_fetches.clear()
+    posts = sa.Table("posts", sa.MetaData(), autoload_with=engine)
+    assert [c.name for c in posts.columns] == ["id", "user_id", "body"]
+    # posts → users via FK, so SQLAlchemy reflects both: one fetch each,
+    # even though each table goes through five or six Inspector methods.
+    assert [c["table_name_filter"] for c in count_fetches] == ["posts", "users"]
+
+
+def test_table_autoload_without_fk_resolution_fetches_once(count_fetches):
+    engine = _make_engine()
+    _seed(engine)
+    count_fetches.clear()
+    sa.Table("posts", sa.MetaData(), autoload_with=engine, resolve_fks=False)
+    assert len(count_fetches) == 1, count_fetches
+
+
+def test_metadata_reflect_fetches_once_per_table_plus_listing(count_fetches):
+    engine = _make_engine()
+    _seed(engine)
+    count_fetches.clear()
+    md = sa.MetaData()
+    md.reflect(bind=engine)
+    assert set(md.tables) == {"users", "posts"}
+    # One listing fetch (depth="tables") plus one depth="all" fetch per table.
+    assert len(count_fetches) == 3, count_fetches
+
+
+def test_cache_keys_distinguish_depth_and_table(count_fetches):
+    engine = _make_engine()
+    _seed(engine)
+    insp = inspect(engine)
+    count_fetches.clear()
+    insp.get_columns("users")
+    insp.get_pk_constraint("users")  # same table: cached
+    insp.get_columns("posts")  # different table: new fetch
+    insp.get_table_names()  # different depth: new fetch
+    assert len(count_fetches) == 3, count_fetches
+
+
+def test_dialect_methods_work_without_info_cache():
+    """Direct dialect calls (no Inspector) must still fetch and succeed."""
+    engine = _make_engine()
+    _seed(engine)
+    with engine.connect() as conn:
+        cols = engine.dialect.get_columns(conn, "users")
+    assert [c["name"] for c in cols] == ["id", "email", "name", "created_at"]
