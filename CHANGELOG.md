@@ -8,6 +8,19 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Proxy settings from a local config file** — `HTTP_PROXY` /
+  `HTTPS_PROXY` / `NO_PROXY` are honoured as before; when unset, a
+  `[proxy]` section in `sqlalchemy-adbc.toml` is exported into the process
+  environment the Go-based drivers read, never overriding what you set.
+- **Authentication modes** — `auth=bearer|basic|negotiate|oauth2` and
+  `auth_profile=<name>` on Flight SQL (basic Handshake, Kerberos/SPNEGO via
+  the new `kerberos` extra, native driver OAuth2 client credentials) and
+  `auth=oauth2` on Snowflake (token minted per connection). Profiles live
+  in the config file (`$SQLALCHEMY_ADBC_CONFIG` or
+  `~/.config/sqlalchemy-adbc/config.toml`, owner-only), with `env:NAME`
+  references for secrets. URL authors cannot redirect a profile's secret,
+  use `env:` references, or pass a client secret in the query string.
+  `tomli` is a dependency on Python 3.10.
 - **Snowflake parameter binding for every Python type** — the ADBC
   Snowflake driver binds only `int`/`str`/`float`/`bool` and rejects a
   parameter that is `None` in every row. The dialect now renders `Decimal`,
