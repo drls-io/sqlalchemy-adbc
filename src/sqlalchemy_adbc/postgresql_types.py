@@ -13,9 +13,10 @@ subclasses that round-trip the common PG types through ADBC:
 
 Arrays (``INTEGER[]``, ``TEXT[]``, ...) already round-trip correctly
 through ADBC → pyarrow → Python list, so we don't need a custom
-decorator. ``hstore`` and range types are deferred — they're less
-common and have non-trivial parsing requirements; follow-up PRs can
-add them without changing this file's layout.
+decorator. Range and multirange types and ``hstore`` live in
+:mod:`sqlalchemy_adbc.postgresql_ranges` (ADBC returns them as PG
+binary, so they cast to text on read and to the PG type on bind) and
+are re-exported and registered here.
 
 The ``pg_ischema_names`` dict registers these types under their PG
 catalog names so ``get_columns`` reflection (Issue #1) hands them
@@ -30,6 +31,16 @@ import uuid
 from typing import Any
 
 from sqlalchemy import types as sa_types
+from sqlalchemy.dialects.postgresql import Range
+
+from sqlalchemy_adbc.postgresql_ranges import (
+    DATERANGE,
+    INT4RANGE,
+    INT8RANGE,
+    NUMRANGE,
+    TSRANGE,
+    TSTZRANGE,
+)
 
 
 class JSONB(sa_types.TypeDecorator[Any]):
@@ -147,4 +158,27 @@ pg_ischema_names: dict[str, type[sa_types.TypeEngine[Any]]] = {
     "CIDR": CIDR,
     "MACADDR": MACADDR,
     "MACADDR8": MACADDR,
+    "INT4RANGE": INT4RANGE,
+    "INT8RANGE": INT8RANGE,
+    "NUMRANGE": NUMRANGE,
+    "TSRANGE": TSRANGE,
+    "TSTZRANGE": TSTZRANGE,
+    "DATERANGE": DATERANGE,
 }
+
+__all__ = [
+    "CIDR",
+    "DATERANGE",
+    "INET",
+    "INT4RANGE",
+    "INT8RANGE",
+    "JSON",
+    "JSONB",
+    "MACADDR",
+    "NUMRANGE",
+    "Range",
+    "TSRANGE",
+    "TSTZRANGE",
+    "UUID",
+    "pg_ischema_names",
+]

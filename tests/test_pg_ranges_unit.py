@@ -165,3 +165,31 @@ def test_format_multirange_roundtrip():
 def test_malformed_multirange_raises(bad):
     with pytest.raises(ValueError, match="multirange"):
         parse_multirange(bad, INT_CODEC)
+
+
+# ── Task 4: range decorators ─────────────────────────────────────────
+
+from sqlalchemy_adbc.postgresql_types import INT4RANGE, TSTZRANGE, pg_ischema_names  # noqa: E402
+
+
+def test_range_decorators_registered_and_compile_with_casts():
+    d = ADBCPostgreSQLDialect()
+    assert pg_ischema_names["INT4RANGE"] is INT4RANGE and pg_ischema_names["TSTZRANGE"] is TSTZRANGE
+    t = sa.Table("t", sa.MetaData(), sa.Column("r", INT4RANGE))
+    sel = str(sa.select(t).compile(dialect=d))
+    assert "CAST(t.r AS TEXT) AS r" in sel
+    ins = str(t.insert().values(r=Range(1, 2, bounds="[)")).compile(dialect=d))
+    assert "CAST(" in ins and "AS INT4RANGE)" in ins
+    where = str(sa.select(t.c.r).where(t.c.r.contains(3)).compile(dialect=d))
+    assert "@> CAST(" in where and "AS INTEGER)" in where
+    where_r = str(
+        sa.select(t.c.r).where(t.c.r.contains(Range(2, 4, bounds="[)"))).compile(dialect=d)
+    )
+    assert "AS INT4RANGE)" in where_r
+
+
+def test_every_range_decorator_declares_cache_ok():
+    from sqlalchemy_adbc import postgresql_types as m
+
+    for name in ["INT4RANGE", "INT8RANGE", "NUMRANGE", "TSRANGE", "TSTZRANGE", "DATERANGE"]:
+        assert getattr(m, name).__dict__.get("cache_ok") is True, name

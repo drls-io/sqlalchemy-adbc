@@ -25,7 +25,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy import types as sa_types
+from sqlalchemy.dialects import postgresql as pg
 from sqlalchemy.dialects.postgresql import MultiRange, Range
 
 _VALID_BOUNDS = {"[)", "[]", "(]", "()"}
@@ -207,3 +209,85 @@ def parse_multirange(text: str, codec: ElementCodec) -> MultiRange[Any]:
 def format_multirange(values: Sequence[Range[Any]], codec: ElementCodec) -> str:
     """``MultiRange`` or plain ``list[Range]`` → PG multirange text."""
     return "{" + ",".join(format_range(r, codec) for r in values) + "}"
+
+
+# ── Decorators ───────────────────────────────────────────────────────
+
+
+class _ElementCast(sa_types.TypeDecorator[Any]):
+    """Scalar operand of a range operator, cast to the element SQL type.
+
+    The driver binds a Python ``int`` as ``int8``; without the cast PG
+    reports ``operator does not exist: int4range @> bigint``.
+    """
+
+    impl: Any = sa_types.TypeEngine  # replaced per instance; SQLAlchemy accepts an instance
+    cache_ok = True
+
+    def __init__(self, element_type: sa_types.TypeEngine[Any]) -> None:
+        super().__init__()
+        self.impl = element_type
+
+    def bind_expression(self, bindvalue: Any) -> Any:
+        return sa.cast(bindvalue, self.impl)
+
+
+class _RangeType(sa_types.TypeDecorator[Any]):
+    """Shared machinery: cast on bind, cast-to-text on read, text codec."""
+
+    impl = sa_types.TypeEngine
+    cache_ok = True
+    codec: ElementCodec
+
+    def bind_expression(self, bindvalue: Any) -> Any:
+        return sa.cast(bindvalue, self.impl)
+
+    def column_expression(self, colexpr: Any) -> Any:
+        return sa.type_coerce(sa.cast(colexpr, sa_types.Text), self)
+
+    def coerce_compared_value(self, op: Any, value: Any) -> sa_types.TypeEngine[Any]:
+        if isinstance(value, Range):
+            return self
+        return _ElementCast(self.codec.sql_type)
+
+    def process_bind_param(self, value: Any, dialect: Any) -> Any:
+        return None if value is None else format_range(value, self.codec)
+
+    def process_result_value(self, value: Any, dialect: Any) -> Any:
+        return None if value is None else parse_range(value, self.codec)
+
+
+class INT4RANGE(_RangeType):
+    impl = pg.INT4RANGE
+    cache_ok = True
+    codec = INT_CODEC
+
+
+class INT8RANGE(_RangeType):
+    impl = pg.INT8RANGE
+    cache_ok = True
+    codec = BIGINT_CODEC
+
+
+class NUMRANGE(_RangeType):
+    impl = pg.NUMRANGE
+    cache_ok = True
+    codec = NUMERIC_CODEC
+
+
+class TSRANGE(_RangeType):
+    impl = pg.TSRANGE
+    cache_ok = True
+    codec = TIMESTAMP_CODEC
+
+
+class TSTZRANGE(_RangeType):
+    impl = pg.TSTZRANGE
+    cache_ok = True
+    codec = TIMESTAMPTZ_CODEC
+
+
+class DATERANGE(_RangeType):
+    impl = pg.DATERANGE
+    cache_ok = True
+    codec = DATE_CODEC
