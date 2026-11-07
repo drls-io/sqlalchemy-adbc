@@ -10,8 +10,10 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 - **Column-wise result conversion** — the dialect now wraps the ADBC DBAPI
   cursor and converts each Arrow record batch column-wise instead of cell
-  by cell. `fetchall()` on 1M rows × 4 columns drops from 4.6 s to 0.5 s;
-  `pandas.read_sql` from 4.9 s to 0.9 s. Values are identical. `fetchmany`
+  by cell. `fetchall()` on 1M rows × 4 columns drops from 4.6 s to 0.5 s,
+  `pandas.read_sql` from 4.9 s to 0.9 s, and
+  `polars.read_database(connection=engine)` from 4.8 s to 0.79 s. Values
+  are identical. `fetchmany`
   still streams one batch at a time. Every SQLAlchemy consumer (Superset,
   pandas, marimo, Polars via the engine) benefits without changes.
   `cursor.fetch_arrow_table()` and the other Arrow extensions still pass
