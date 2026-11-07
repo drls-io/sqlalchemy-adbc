@@ -35,7 +35,6 @@ AUTH_TYPES = ("bearer", "basic", "negotiate", "oauth2")
 AUTH_URL_KEYS = (
     "auth",
     "auth_profile",
-    "spn",
     "oauth2_flow",
     "oauth2_token_url",
     "oauth2_client_id",
@@ -60,7 +59,6 @@ _PROFILE_FIELDS = {
 # URL key → AuthSettings field
 _URL_FIELDS = {
     "auth": "type",
-    "spn": "spn",
     "oauth2_flow": "oauth2_flow",
     "oauth2_token_url": "oauth2_token_url",
     "oauth2_client_id": "oauth2_client_id",
@@ -113,6 +111,10 @@ def settings_from_query(
             "oauth2_client_secret is not accepted in the URL query; put it in the URL "
             "password (user = client_id) or in a config profile"
         )
+    if "spn" in query:
+        # A ticket for a service other than the connection host could be
+        # relayed by that host; only the config owner may pin an SPN.
+        raise ArgumentError("spn may only be set in a config profile, not in the URL")
     url_values = {k: query.pop(k) for k in AUTH_URL_KEYS if k in query}
     for key, raw in url_values.items():
         if raw.startswith("env:"):

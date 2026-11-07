@@ -69,7 +69,7 @@ def test_no_auth_keys_gives_type_none():
 
 
 def test_url_cannot_redirect_a_profile_secret():
-    for key in ("oauth2_token_url", "oauth2_flow", "spn", "auth", "oauth2_client_id"):
+    for key in ("oauth2_token_url", "oauth2_flow", "auth", "oauth2_client_id"):
         with pytest.raises(ArgumentError, match=f"cannot combine auth_profile with {key}"):
             settings_from_query({"auth_profile": "flight", key: "x"}, CFG, env={"SEC": "s"})
     # scope/audience are harmless to override
@@ -86,6 +86,11 @@ def test_env_refs_only_honoured_from_config_not_url():
         settings_from_query(
             {"auth": "oauth2", "oauth2_client_id": "env:AWS_SECRET_ACCESS_KEY"}, CFG
         )
+
+
+def test_spn_never_accepted_in_url_query():
+    with pytest.raises(ArgumentError, match="spn may only be set in a config profile"):
+        settings_from_query({"auth": "negotiate", "spn": "HTTP@other"}, CFG)
 
 
 def test_client_secret_never_accepted_in_url_query():
