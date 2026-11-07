@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote, unquote
 
+from sqlalchemy.dialects.postgresql.base import PGTypeCompiler
 from sqlalchemy.engine.interfaces import ReflectedColumn, ReflectedIndex
 from sqlalchemy.engine.url import URL, make_url
 
@@ -32,6 +33,10 @@ class ADBCPostgreSQLDialect(ADBCDialect):
     driver = "adbc"
     driver_module = "adbc_driver_postgresql.dbapi"
     supports_statement_cache = True
+    # SQLAlchemy's generic type compiler cannot render PG-only types
+    # (JSONB, INT4RANGE, HSTORE) and renders DateTime as DATETIME, which
+    # PG rejects. PG's own compiler handles DDL and CAST targets.
+    type_compiler_cls = PGTypeCompiler
 
     # adbc_driver_postgresql binds parameters positionally via libpq's
     # native ``$1, $2, ...`` placeholders. Two SQLAlchemy paramstyles
