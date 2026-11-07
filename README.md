@@ -37,18 +37,18 @@ import sqlalchemy
 
 # Flight SQL
 engine = sqlalchemy.create_engine(
-    "adbc+flightsql://flight-sql.example.com:443?tls=true",
+    "flightsql+adbc://flight-sql.example.com:443?tls=true",
     connect_args={"db_kwargs": {
         "adbc.flight.sql.authorization_header": f"Bearer {token}",
     }},
 )
 
 # SQLite
-engine = sqlalchemy.create_engine("adbc+sqlite:///path/to/db.sqlite")
+engine = sqlalchemy.create_engine("sqlite+adbc:///path/to/db.sqlite")
 
 # PostgreSQL
 engine = sqlalchemy.create_engine(
-    "adbc+postgresql://user:pass@host:5432/mydb"
+    "postgresql+adbc://user:pass@host:5432/mydb"
 )
 
 # Works with pandas, Polars, marimo SQL cells, etc.
@@ -58,14 +58,18 @@ df = pd.read_sql("SELECT 1 AS n", engine)
 
 ## URL forms
 
-| Driver       | URL                                                        |
+URLs follow SQLAlchemy's `<backend>+<driver>://` convention, with `adbc`
+as the driver. The pre-0.4 `adbc+<backend>://` spelling still works but
+emits a `DeprecationWarning` and will be removed in 1.0.
+
+| Backend      | URL                                                        |
 |--------------|------------------------------------------------------------|
-| Flight SQL   | `adbc+flightsql://host:port?tls=true&authorization=...`    |
-| Flight SQL   | `adbc+flightsql://user:TOKEN@host:port?tls=true` (bearer)  |
-| PostgreSQL   | `adbc+postgresql://user:pass@host:port/database`           |
-| SQLite       | `adbc+sqlite:///path/to/db` or `adbc+sqlite:///:memory:`   |
-| Snowflake    | `adbc+snowflake://user:pass@account/db/schema?warehouse=W` |
-| BigQuery     | `adbc+bigquery:///my-project?dataset=my_dataset`           |
+| Flight SQL   | `flightsql+adbc://host:port?tls=true&authorization=...`    |
+| Flight SQL   | `flightsql+adbc://user:TOKEN@host:port?tls=true` (bearer)  |
+| PostgreSQL   | `postgresql+adbc://user:pass@host:port/database`           |
+| SQLite       | `sqlite+adbc:///path/to/db` or `sqlite+adbc:///:memory:`   |
+| Snowflake    | `snowflake+adbc://user:pass@account/db/schema?warehouse=W` |
+| BigQuery     | `bigquery+adbc:///my-project?dataset=my_dataset`           |
 
 ### Flight SQL query-string options
 

@@ -29,7 +29,7 @@ from sqlalchemy import inspect
 PG_URL = os.environ.get("DRLS_PG_URL")
 pytestmark = pytest.mark.skipif(
     not PG_URL,
-    reason="Requires DRLS_PG_URL (e.g. adbc+postgresql://user:pw@host/db)",
+    reason="Requires DRLS_PG_URL (e.g. postgresql+adbc://user:pw@host/db)",
 )
 
 # Lazy-imported so the pytest collection doesn't fail when the extra

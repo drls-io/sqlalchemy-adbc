@@ -25,7 +25,7 @@ from alembic.migration import MigrationContext  # noqa: E402
 
 
 def _make_engine() -> sa.Engine:
-    return sa.create_engine("adbc+sqlite:///:memory:")
+    return sa.create_engine("sqlite+adbc:///:memory:")
 
 
 def _diff(engine: sa.Engine, target: sa.MetaData, **opts: Any) -> tuple[str, str]:
