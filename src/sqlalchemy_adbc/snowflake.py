@@ -27,9 +27,15 @@ from urllib.parse import quote
 import pyarrow as pa
 from sqlalchemy import types as sa_types
 from sqlalchemy.engine.url import URL
+from sqlalchemy.exc import ArgumentError
 
+from sqlalchemy_adbc.auth import require, settings_from_query, token_source_for
 from sqlalchemy_adbc.base import ADBCDialect
+from sqlalchemy_adbc.config import load_config
 from sqlalchemy_adbc.snowflake_types import snowflake_ischema_names
+
+_AUTH_TYPE = "adbc.snowflake.sql.auth_type"
+_AUTH_TOKEN = "adbc.snowflake.sql.client_option.auth_token"
 
 
 class _IsoDate(sa_types.Date):
@@ -117,22 +123,40 @@ class ADBCSnowflakeDialect(ADBCDialect):
         cursor.executemany(statement, parameters)
 
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
+        query: dict[str, str] = {
+            k: (v[-1] if isinstance(v, tuple) else v) for k, v in url.query.items()
+        }
+        settings = settings_from_query(query, load_config(), password=url.password)
+        kwargs: dict[str, Any] = {}
+        url_password = url.password
+
+        if settings.type in ("negotiate", "bearer"):
+            raise ArgumentError(f"auth={settings.type} is not supported by the Snowflake driver")
+        if settings.type == "oauth2":
+            # The driver takes a static token; we mint and cache one per
+            # connection via client credentials. The URL password was the
+            # client secret, so it must not reach the DSN.
+            require(settings, "oauth2_token_url", "oauth2_client_id", "oauth2_client_secret")
+            kwargs["db_kwargs"] = {
+                _AUTH_TYPE: "auth_oauth",
+                _AUTH_TOKEN: token_source_for(settings).token(),
+            }
+            url_password = None
+
         # SQLAlchemy decodes userinfo but leaves the database path
         # untouched. Re-quoting userinfo keeps a password like ``p@ss``
         # from being parsed as a second @-separator; the path is
         # already in the encoded form the caller wrote.
         user = quote(url.username, safe="") if url.username else ""
-        password = f":{quote(url.password, safe='')}" if url.password else ""
-        auth = f"{user}{password}@" if user or url.password else ""
+        password = f":{quote(url_password, safe='')}" if url_password else ""
+        auth = f"{user}{password}@" if user or url_password else ""
         account = url.host or ""
         path = f"/{url.database}" if url.database else ""
 
         query_str = ""
-        if url.query:
-            pairs = [
-                f"{quote(str(k), safe='')}={quote(str(v), safe='')}" for k, v in url.query.items()
-            ]
+        if query:
+            pairs = [f"{quote(k, safe='')}={quote(v, safe='')}" for k, v in query.items()]
             query_str = "?" + "&".join(pairs)
 
         dsn = f"{auth}{account}{path}{query_str}"
-        return [dsn], {}
+        return [dsn], kwargs

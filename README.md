@@ -80,6 +80,68 @@ emits a `DeprecationWarning` and will be removed in 1.0.
 | `header.<name>=<v>` | Forwarded via ADBC's `RPC_CALL_HEADER_PREFIX`      |
 | (any other key)     | Passed through as a db_kwarg verbatim              |
 
+## Proxies
+
+The Flight SQL, Snowflake and BigQuery drivers are Go libraries that read
+`HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case) from the process
+environment, so if those are set nothing more is needed. When they are not,
+a `[proxy]` section in the local config file (below) is exported into the
+environment on the first connect. A variable you already set always wins;
+the export is process-wide because that is the only lever the drivers have.
+PostgreSQL (libpq) and SQLite have no HTTP proxy concept.
+
+## Authentication
+
+Pick a mode with `auth=` in the URL, or name a profile from the config file
+with `auth_profile=`:
+
+| Mode        | Flight SQL | Snowflake | Credentials |
+|-------------|-----------:|----------:|-------------|
+| `bearer`    | default    | –         | URL password is the token (`flightsql+adbc://u:TOKEN@host`) |
+| `basic`     | yes        | default   | URL `user:password@`; Flight SQL uses the Handshake |
+| `negotiate` | yes        | –         | Kerberos/SPNEGO via `pip install "sqlalchemy-adbc[kerberos]"`; SPN is `HTTP@<host>` unless a profile pins `spn` |
+| `oauth2`    | yes        | yes       | client credentials: `oauth2_token_url=`, URL `client_id:client_secret@` (or a profile); optional `oauth2_scope=`, `oauth2_audience=` |
+
+Flight SQL runs the OAuth2 flow inside the driver and refreshes tokens
+itself. Snowflake receives a token minted by this package per connection.
+Snowflake's own `authenticator=` DSN options (key pair, Okta, external
+browser) keep working unchanged through the query string.
+
+### Config file
+
+Secrets stay out of URLs by living in a profile. The file is read from
+`$SQLALCHEMY_ADBC_CONFIG`, else `~/.config/sqlalchemy-adbc/config.toml`;
+it must be owned by you and not group- or world-writable, and the working
+directory is deliberately never searched. Any value may be `env:NAME`.
+
+```toml
+[proxy]
+https_proxy = "http://proxy.corp.example:3128"
+no_proxy    = "localhost,127.0.0.1,.corp.example"
+
+[auth.drls-flight]
+type = "oauth2"
+token_url = "https://keycloak.example/realms/drls/protocol/openid-connect/token"
+client_id = "marimo"
+client_secret = "env:DRLS_FLIGHT_CLIENT_SECRET"
+scope = "openid"
+
+[auth.corp-kerberos]
+type = "negotiate"
+spn = "HTTP@flight-sql.corp.example"
+```
+
+```python
+engine = sqlalchemy.create_engine(
+    "flightsql+adbc://flight-sql.corp.example:443?auth_profile=drls-flight"
+)
+```
+
+A URL that names a profile may only adjust `oauth2_scope` and
+`oauth2_audience`; the token endpoint, SPN and client identity stay under
+the config owner's control, `env:` references resolve only from the file,
+and `oauth2_client_secret` is never accepted in a query string.
+
 ## Status
 
 **Beta.** Core dialect + reflection + Alembic autogenerate work on

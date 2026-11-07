@@ -61,3 +61,52 @@ def test_database_path_with_schema():
     # NOT over-escape ``/`` between db and schema.
     args, _ = _build("snowflake+adbc://u:p@acct/my_db/public")
     assert args == ["u:p@acct/my_db/public"]
+
+
+# ── Authentication modes ─────────────────────────────────────────────
+
+import pytest  # noqa: E402
+from sqlalchemy.exc import ArgumentError  # noqa: E402
+
+
+def test_oauth2_mints_token_into_db_kwargs(monkeypatch):
+    import sqlalchemy_adbc.snowflake as sf
+
+    seen = {}
+
+    class Src:
+        def token(self):
+            return "minted"
+
+    def fake_source(settings):
+        seen["settings"] = settings
+        return Src()
+
+    monkeypatch.setattr(sf, "token_source_for", fake_source)
+    # Snowflake user stays in the DSN; the URL password is the OAuth2 client secret.
+    args, kw = _build(
+        "snowflake+adbc://u:sec@acct/db/s?warehouse=WH&auth=oauth2"
+        "&oauth2_token_url=https://idp/t&oauth2_client_id=c"
+    )
+    assert args == ["u@acct/db/s?warehouse=WH"]  # auth keys stripped, no password in DSN
+    assert kw["db_kwargs"] == {
+        "adbc.snowflake.sql.auth_type": "auth_oauth",
+        "adbc.snowflake.sql.client_option.auth_token": "minted",
+    }
+    assert (seen["settings"].oauth2_client_id, seen["settings"].oauth2_client_secret) == (
+        "c",
+        "sec",
+    )
+
+
+def test_negotiate_unsupported_on_snowflake():
+    with pytest.raises(ArgumentError, match="not supported by the Snowflake driver"):
+        _build("snowflake+adbc://u@acct/db?auth=negotiate")
+
+
+def test_basic_is_default_and_unchanged():
+    assert (
+        _build("snowflake+adbc://u:p@acct/db?auth=basic")[0]
+        == _build("snowflake+adbc://u:p@acct/db")[0]
+    )
+    assert _build("snowflake+adbc://u:p@acct/db?auth=basic")[0] == ["u:p@acct/db"]

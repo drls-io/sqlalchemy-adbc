@@ -31,6 +31,8 @@ dependencies = [
     # them through DBAPI. Without it, `cursor.fetchall()` raises a
     # ProgrammingError.
     "pyarrow>=14.0",
+    # TOML config file (tomllib is stdlib from 3.11).
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -39,6 +41,8 @@ postgresql = ["adbc-driver-postgresql>=1.0"]
 sqlite = ["adbc-driver-sqlite>=1.0"]
 snowflake = ["adbc-driver-snowflake>=1.0"]
 bigquery = ["adbc-driver-bigquery>=1.0"]
+# Kerberos / SPNEGO (auth=negotiate) on Flight SQL.
+kerberos = ["pyspnego>=0.10"]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
@@ -103,6 +107,8 @@ follow_imports = "silent"
 
 [[tool.mypy.overrides]]
 module = [
+    "tomli",  # only imported on Python < 3.11
+    "spnego.*",  # optional `kerberos` extra, imported lazily
     "adbc_driver_manager.*",
     "adbc_driver_flightsql.*",
     "adbc_driver_postgresql.*",
