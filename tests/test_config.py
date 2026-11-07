@@ -20,21 +20,34 @@ client_secret = "env:SECRET"
 """
 
 
-def test_discovery_order(tmp_path):
+def test_discovery_order_explicit_then_home_never_cwd(tmp_path, monkeypatch):
     explicit = tmp_path / "explicit.toml"
     explicit.write_text(TOML)
-    (tmp_path / "cwd").mkdir()
-    cwd_file = tmp_path / "cwd" / "sqlalchemy-adbc.toml"
-    cwd_file.write_text(TOML)
     home = tmp_path / "home"
     (home / ".config" / "sqlalchemy-adbc").mkdir(parents=True)
     home_file = home / ".config" / "sqlalchemy-adbc" / "config.toml"
     home_file.write_text(TOML)
+    # A config dropped into the working directory must never be picked up:
+    # a cloned repository could otherwise redirect traffic or steal secrets.
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / "sqlalchemy-adbc.toml").write_text(TOML)
+    monkeypatch.chdir(cwd)
     env = {"SQLALCHEMY_ADBC_CONFIG": str(explicit)}
-    assert find_config_path(env, cwd=tmp_path / "cwd", home=home) == explicit
-    assert find_config_path({}, cwd=tmp_path / "cwd", home=home) == cwd_file
-    assert find_config_path({}, cwd=tmp_path, home=home) == home_file
-    assert find_config_path({}, cwd=tmp_path, home=tmp_path / "nohome") is None
+    assert find_config_path(env, home=home) == explicit
+    assert find_config_path({}, home=home) == home_file
+    assert find_config_path({}, home=tmp_path / "nohome") is None
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+def test_group_or_world_writable_config_is_rejected(tmp_path):
+    p = tmp_path / "loose.toml"
+    p.write_text(TOML)
+    p.chmod(0o666)
+    with pytest.raises(ArgumentError, match=r"writable"):
+        load_config(p)
+    p.chmod(0o600)
+    assert load_config(p).proxy["no_proxy"] == "localhost"
 
 
 def test_load_parses_sections_and_keeps_env_refs_unresolved(tmp_path):

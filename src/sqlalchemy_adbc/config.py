@@ -3,8 +3,13 @@
 Discovery order (first hit wins; absence is normal and silent):
 
 1. the path in ``$SQLALCHEMY_ADBC_CONFIG``
-2. ``./sqlalchemy-adbc.toml``
-3. ``~/.config/sqlalchemy-adbc/config.toml``
+2. ``~/.config/sqlalchemy-adbc/config.toml``
+
+The working directory is deliberately not searched: a file dropped into a
+cloned repository could otherwise redirect traffic through a hostile proxy
+or point OAuth2 at a token endpoint that harvests ``env:`` secrets. For the
+same reason the file must be owned by the current user and not writable by
+group or others.
 
 Shape::
 
@@ -39,7 +44,6 @@ else:  # pragma: no cover - exercised on the 3.10 CI cell
     import tomli as tomllib
 
 CONFIG_ENV = "SQLALCHEMY_ADBC_CONFIG"
-CONFIG_BASENAME = "sqlalchemy-adbc.toml"
 USER_CONFIG = Path("~/.config/sqlalchemy-adbc/config.toml")
 
 
@@ -55,21 +59,29 @@ EMPTY_CONFIG = Config({}, {}, None)
 
 def find_config_path(
     env: Mapping[str, str] = os.environ,
-    cwd: Path | None = None,
     home: Path | None = None,
 ) -> Path | None:
-    """Return the first config file that exists in the discovery order."""
+    """Return the explicit path, else the user config if it exists, else None."""
     explicit = env.get(CONFIG_ENV)
     if explicit:
         return Path(explicit)
-    candidates = [
-        (cwd or Path.cwd()) / CONFIG_BASENAME,
-        (home / USER_CONFIG.relative_to("~")) if home is not None else USER_CONFIG.expanduser(),
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    return None
+    user_config = (
+        (home / USER_CONFIG.relative_to("~")) if home is not None else USER_CONFIG.expanduser()
+    )
+    return user_config if user_config.is_file() else None
+
+
+def _check_trusted(path: Path) -> None:
+    """Refuse a config another user could have written (POSIX only)."""
+    if os.name != "posix":
+        return
+    st = path.stat()
+    if st.st_mode & 0o022:
+        raise ArgumentError(
+            f"cannot read config {path}: file is group/world-writable; use chmod 600"
+        )
+    if hasattr(os, "geteuid") and st.st_uid != os.geteuid():
+        raise ArgumentError(f"cannot read config {path}: file is not owned by the current user")
 
 
 def _str_table(raw: Any, section: str, path: Path) -> dict[str, str]:
@@ -86,6 +98,7 @@ def load_config(path: Path | None = None, *, env: Mapping[str, str] = os.environ
             return EMPTY_CONFIG
     if not path.exists():
         return EMPTY_CONFIG
+    _check_trusted(path)
     try:
         with path.open("rb") as fh:
             data = tomllib.load(fh)
