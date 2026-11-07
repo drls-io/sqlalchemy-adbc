@@ -37,7 +37,7 @@ dependencies = [
 flightsql = ["adbc-driver-flightsql>=1.0"]
 postgresql = ["adbc-driver-postgresql>=1.0"]
 sqlite = ["adbc-driver-sqlite>=1.0"]
-snowflake = ["adbc-driver-snowflake>=1.0"]
+snowflake = ["adbc-driver-snowflake>=1.11,<2"]
 bigquery = ["adbc-driver-bigquery>=1.0"]
 dev = [
     "pytest>=8.0",
