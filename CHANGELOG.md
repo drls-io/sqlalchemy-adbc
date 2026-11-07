@@ -21,6 +21,16 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   references for secrets. URL authors cannot redirect a profile's secret,
   use `env:` references, or pass a client secret in the query string.
   `tomli` is a dependency on Python 3.10.
+- **PostgreSQL range, multirange and hstore types** — `INT4RANGE`,
+  `INT8RANGE`, `NUMRANGE`, `TSRANGE`, `TSTZRANGE`, `DATERANGE`, the six
+  `*MULTIRANGE` types and `HSTORE` in `sqlalchemy_adbc.postgresql_types`.
+  Values are SQLAlchemy's own `Range` / `MultiRange` / `dict`, so code
+  written for psycopg works unchanged. ADBC returns these columns as PG
+  binary and rejects text parameters, so the decorators cast to the PG
+  type on bind and to text on read. Range operators work with range and
+  scalar operands (`period.contains(now)`); reflection returns the
+  decorators; `create_all` emits the real type names. Unbounded and
+  `±infinity` bounds read as `None`.
 - **Snowflake parameter binding for every Python type** — the ADBC
   Snowflake driver binds only `int`/`str`/`float`/`bool` and rejects a
   parameter that is `None` in every row. The dialect now renders `Decimal`,
@@ -50,6 +60,14 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   pandas, marimo, Polars via the engine) benefits without changes.
   `cursor.fetch_arrow_table()` and the other Arrow extensions still pass
   through. ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
+
+### Fixed
+
+- **PostgreSQL DDL rendering** — the dialect now uses SQLAlchemy's PG
+  type compiler. `create_all` and `CAST` targets render `JSONB`,
+  `INT4RANGE`, `HSTORE`, and `DateTime` renders `TIMESTAMP WITHOUT TIME
+  ZONE` instead of `DATETIME`, which PG rejected.
+  ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
 
 ## [0.4.0] — 2026-11-07
 

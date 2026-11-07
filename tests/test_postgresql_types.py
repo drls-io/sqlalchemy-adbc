@@ -18,13 +18,18 @@ is cheaper and more realistic.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import uuid
+from decimal import Decimal
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import inspect
+from sqlalchemy.dialects.postgresql import MultiRange, Range
+
+UTC = dt.timezone.utc
 
 PG_URL = os.environ.get("DRLS_PG_URL")
 pytestmark = pytest.mark.skipif(
@@ -35,6 +40,7 @@ pytestmark = pytest.mark.skipif(
 # Lazy-imported so the pytest collection doesn't fail when the extra
 # isn't installed. `pytestmark` already handles the skip.
 if PG_URL:
+    from sqlalchemy_adbc import postgresql_types as pgtypes
     from sqlalchemy_adbc.postgresql_types import (  # noqa: E402
         CIDR,
         INET,
@@ -334,3 +340,141 @@ def test_uuid_as_uuid_false_returns_string():
     got = UUID(as_uuid=False).process_result_value(str(u), None)
     assert isinstance(got, str)
     assert got == str(u)
+
+
+# ── Range types (issue #11) ──────────────────────────────────────────
+
+RANGE_CASES = [  # (decorator, pg type, canonical Range values to round-trip, scalar operand)
+    (
+        "INT4RANGE",
+        "int4range",
+        [
+            Range(1, 10, bounds="[)"),
+            Range(None, 6, bounds="()"),
+            Range(1, None, bounds="[)"),
+            Range(None, None, bounds="()"),
+            Range(empty=True),
+            None,
+        ],
+        3,
+    ),
+    ("INT8RANGE", "int8range", [Range(2**40, 2**41, bounds="[)"), None], 2**40 + 1),
+    (
+        "NUMRANGE",
+        "numrange",
+        [Range(Decimal("1.5"), Decimal("2.75"), bounds="[]"), Range(empty=True), None],
+        Decimal("2"),
+    ),
+    (
+        "TSRANGE",
+        "tsrange",
+        [Range(dt.datetime(2024, 1, 1), dt.datetime(2024, 2, 1), bounds="[)"), None],
+        dt.datetime(2024, 1, 15),
+    ),
+    (
+        "TSTZRANGE",
+        "tstzrange",
+        [
+            Range(
+                dt.datetime(2024, 1, 1, tzinfo=UTC),
+                dt.datetime(2024, 2, 1, tzinfo=UTC),
+                bounds="[)",
+            ),
+            Range(None, dt.datetime(2024, 2, 1, tzinfo=UTC), bounds="(]"),
+            None,
+        ],
+        dt.datetime(2024, 1, 15, tzinfo=UTC),
+    ),
+    (
+        "DATERANGE",
+        "daterange",
+        [Range(dt.date(2024, 1, 1), None, bounds="[)"), Range(empty=True), None],
+        dt.date(2024, 6, 1),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "decorator,pgtype,values,scalar", RANGE_CASES, ids=[c[0] for c in RANGE_CASES]
+)
+def test_range_roundtrip_operators_and_reflection(engine, decorator, pgtype, values, scalar):
+    name = f"t_{pgtype}"
+    _drop_table(engine, name)
+    cls = getattr(pgtypes, decorator)
+    t = sa.Table(
+        name,
+        sa.MetaData(),
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("r", cls),
+    )
+    t.create(engine)
+    try:
+        with engine.begin() as c:
+            c.execute(t.insert(), [{"id": i, "r": v} for i, v in enumerate(values)])
+        with engine.connect() as c:
+            back = [r.r for r in c.execute(sa.select(t).order_by(t.c.id))]
+            assert back == values  # Review Focus 5: None stays None
+            assert all(type(b) is Range for b in back if b is not None)
+            assert 0 in c.execute(sa.select(t.c.id).where(t.c.r.contains(scalar))).scalars().all()
+            assert c.execute(sa.select(t.c.id).where(t.c.r == values[0])).scalars().all() == [0]
+            assert (
+                0 in c.execute(sa.select(t.c.id).where(t.c.r.overlaps(values[0]))).scalars().all()
+            )
+        cols = {col["name"]: col["type"] for col in inspect(engine).get_columns(name)}
+        assert isinstance(cols["r"], cls)
+        assert isinstance(sa.Table(name, sa.MetaData(), autoload_with=engine).c.r.type, cls)
+    finally:
+        _drop_table(engine, name)
+
+
+def test_multirange_roundtrip_and_reflection(engine):
+    _drop_table(engine, "t_mr")
+    t = sa.Table(
+        "t_mr",
+        sa.MetaData(),
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("m", pgtypes.INT4MULTIRANGE),
+    )
+    t.create(engine)
+    try:
+        values = [
+            MultiRange([Range(1, 5, bounds="[)"), Range(10, 20, bounds="[)")]),
+            MultiRange([]),
+            None,
+            [Range(30, 40, bounds="[)")],  # plain list binds too
+        ]
+        with engine.begin() as c:
+            c.execute(t.insert(), [{"id": i, "m": v} for i, v in enumerate(values)])
+        with engine.connect() as c:
+            back = [r.m for r in c.execute(sa.select(t).order_by(t.c.id))]
+        assert back[0] == values[0] and back[1] == MultiRange([]) and back[2] is None
+        assert back[3] == MultiRange(values[3])
+        assert all(isinstance(b, MultiRange) for b in back if b is not None)
+        with engine.connect() as c:
+            assert c.execute(sa.select(t.c.id).where(t.c.m.contains(12))).scalars().all() == [0]
+        assert isinstance(inspect(engine).get_columns("t_mr")[1]["type"], pgtypes.INT4MULTIRANGE)
+    finally:
+        _drop_table(engine, "t_mr")
+
+
+def test_hstore_roundtrip_and_reflection(engine):
+    _drop_table(engine, "t_hs")
+    with engine.begin() as c:
+        c.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS hstore")
+    t = sa.Table(
+        "t_hs",
+        sa.MetaData(),
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("h", pgtypes.HSTORE),
+    )
+    t.create(engine)
+    try:
+        values = [{"a": "1", "b c": 'x=>y "q" \\ back', "n": None}, {}, None]
+        with engine.begin() as c:
+            c.execute(t.insert(), [{"id": i, "h": v} for i, v in enumerate(values)])
+        with engine.connect() as c:
+            assert [r.h for r in c.execute(sa.select(t).order_by(t.c.id))] == values  # RF 5
+            assert c.execute(sa.select(t.c.id).where(t.c.h.has_key("a"))).scalars().all() == [0]
+        assert isinstance(inspect(engine).get_columns("t_hs")[1]["type"], pgtypes.HSTORE)
+    finally:
+        _drop_table(engine, "t_hs")
