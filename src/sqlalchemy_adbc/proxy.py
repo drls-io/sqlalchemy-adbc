@@ -11,6 +11,7 @@ Python HTTP client in the same process agree.
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from collections.abc import MutableMapping
@@ -18,6 +19,8 @@ from collections.abc import MutableMapping
 from sqlalchemy_adbc.config import Config, load_config
 
 PROXY_KEYS = ("http_proxy", "https_proxy", "no_proxy")
+
+log = logging.getLogger("sqlalchemy_adbc.proxy")
 
 _applied = False
 _lock = threading.Lock()
@@ -37,6 +40,14 @@ def apply_proxy_env(
             if environ.get(name) != value:
                 environ[name] = value
                 written[name] = value
+    if written:
+        # Values are proxy URLs, not secrets; the path makes a surprising
+        # proxy traceable to the file that set it.
+        log.info(
+            "exported proxy variables %s from %s",
+            sorted(written),
+            config.path or "<no config file>",
+        )
     return written
 
 

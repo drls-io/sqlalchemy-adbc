@@ -65,3 +65,15 @@ def test_dialect_applies_once(monkeypatch, tmp_path):
     p.write_text('[proxy]\nhttps_proxy = "http://changed:2"\n')
     sa.create_engine("sqlite+adbc:///:memory:").connect().close()
     assert os.environ["HTTPS_PROXY"] == "http://cfg:1"
+
+
+def test_logs_which_file_set_the_proxy(caplog):
+    import logging
+    from pathlib import Path
+
+    cfg = Config(
+        {"https_proxy": "http://p:1"}, {}, Path("/home/me/.config/sqlalchemy-adbc/config.toml")
+    )
+    with caplog.at_level(logging.INFO, logger="sqlalchemy_adbc.proxy"):
+        apply_proxy_env(cfg, {})
+    assert "config.toml" in caplog.text and "HTTPS_PROXY" in caplog.text
