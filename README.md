@@ -132,8 +132,10 @@ git clone https://github.com/drls-io/sqlalchemy-adbc
 cd sqlalchemy-adbc
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest
-ruff check src/ tests/
+pytest                 # unit tests; live backends via DRLS_PG_URL / DRLS_SNOWFLAKE_URL
+ruff check src/ tests/ && ruff format --check src/ tests/
+mypy src tests
+tox                    # same gates across Python 3.10–3.13 × SQLAlchemy 2.0/2.1 (tox.ini)
 ```
 
 ## Releasing
