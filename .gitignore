@@ -11,3 +11,6 @@ dist/
 coverage.xml
 htmlcov/
 *.db
+
+# Local-only working notes (specs, plans); never published.
+.claude/
