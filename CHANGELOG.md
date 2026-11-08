@@ -6,6 +6,14 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-08
+
+`sqlite+adbc` is now SQLAlchemy's own SQLite dialect over an ADBC connection
+and passes SQLAlchemy's dialect compliance suite, which runs in CI from here
+on. Dates, times, binary and decimal values round-trip as Python values,
+RETURNING and multi-row inserts work, attached schemas reflect, and NOT NULL
+reflects on every driver version.
+
 ### Added
 
 - **SQLAlchemy dialect compliance suite in CI** — `suite/` runs SQLAlchemy's
