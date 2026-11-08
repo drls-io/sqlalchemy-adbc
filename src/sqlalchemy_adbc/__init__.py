@@ -9,7 +9,20 @@ pyproject.toml). URL forms::
     snowflake+adbc://user:pass@account/db/schema?warehouse=WH
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
+from sqlalchemy_adbc.arrow import fetch_arrow_table, ingest_arrow, open_arrow_batch_reader
 from sqlalchemy_adbc.base import ADBCDialect
 
-__all__ = ["ADBCDialect", "__version__"]
-__version__ = "0.1.0"
+__all__ = [
+    "ADBCDialect",
+    "__version__",
+    "fetch_arrow_table",
+    "ingest_arrow",
+    "open_arrow_batch_reader",
+]
+
+try:
+    __version__ = version("sqlalchemy-adbc")
+except PackageNotFoundError:  # pragma: no cover - source checkout without install
+    __version__ = "0.0.0"

@@ -12,11 +12,13 @@ Arrow-native wire path.
 
 ## Why this exists
 
-ADBC drivers speak Python DBAPI and return results as Arrow record batches —
-zero per-row materialization, no driver-specific JDBC/ODBC install. But most
-of the Python ecosystem wires into databases through SQLAlchemy, and ADBC
-doesn't ship a dialect. This package is a thin translation layer: SQLAlchemy
-URL → ADBC `db_kwargs` → DBAPI connection.
+ADBC drivers speak Python DBAPI and return results as Arrow record batches,
+with no driver-specific JDBC/ODBC install. But most of the Python ecosystem
+wires into databases through SQLAlchemy, and ADBC doesn't ship a dialect.
+This package is a thin translation layer: SQLAlchemy URL → ADBC `db_kwargs`
+→ DBAPI connection. SQLAlchemy's own results are rows; the
+[Arrow-native path](#arrow-native-path) below skips that step when you want
+Arrow, Polars or pandas.
 
 ## Install
 
@@ -56,6 +58,51 @@ engine = sqlalchemy.create_engine(
 import pandas as pd
 df = pd.read_sql("SELECT 1 AS n", engine)
 ```
+
+## Arrow-native path
+
+`Connection.execute()` returns rows, so the driver's Arrow batches are
+converted to Python tuples. `sqlalchemy_adbc.arrow` reaches the ADBC cursor
+behind the same SQLAlchemy connection instead, so you keep the URL, pool,
+authentication and transaction and get Arrow in and out:
+
+```python
+import polars as pl
+from sqlalchemy import bindparam, select
+from sqlalchemy_adbc import fetch_arrow_table, ingest_arrow, open_arrow_batch_reader
+
+with engine.begin() as conn:
+    table = fetch_arrow_table(conn, select(orders).where(orders.c.day >= bindparam("d")), {"d": day})
+    frame = pl.from_arrow(table)                 # or table.to_pandas()
+
+    with open_arrow_batch_reader(conn, "SELECT * FROM events WHERE kind = ?", ["click"]) as reader:
+        for batch in reader:                     # streams, one Arrow batch at a time
+            ...
+
+    ingest_arrow(conn, "orders_copy", table, mode="create")   # append | create | replace | create_append
+```
+
+Statements are SQLAlchemy constructs (compiled with the dialect, bind
+processors included, parameters as a mapping) or plain SQL strings
+(parameters as a positional sequence). The helpers begin the SQLAlchemy
+transaction when none is open, so `conn.commit()`, `conn.rollback()` and
+`with engine.begin()` govern Arrow work as well; `Session.connection()` is
+accepted. Driver errors propagate as the ADBC exceptions. For `append` the
+Arrow schema must match the table (PostgreSQL rejects int64 into an
+`INTEGER` column); Snowflake ingest goes through a stage upload and is
+exercised against a live account only.
+
+| Path | Time (500,000 rows × 5 cols, median of 3) | vs rows |
+|---|---:|---:|
+| SQLAlchemy rows: `conn.execute(select).all()` | 1.15 s | 1.0× |
+| Arrow: `fetch_arrow_table(conn, select)` | 0.16 s | 7.0× |
+| Polars: `pl.from_arrow(fetch_arrow_table(...))` | 0.17 s | 6.8× |
+| pandas: `pd.read_sql(select, conn)` | 1.31 s | 0.9× |
+
+Measured with `benchmarks/arrow_vs_rows.py` on an arm64 Mac (Darwin 27),
+Python 3.12.12, SQLAlchemy 2.0.49, pyarrow 23.0.1, adbc-driver-sqlite 1.11.0,
+polars 2.1.0, pandas 3.1.1, SQLite in memory. Absolute numbers are machine
+specific; the ratio is the point.
 
 ## URL forms
 
