@@ -40,6 +40,18 @@ class Requirements(SuiteRequirements):
         return exclusions.open()
 
     @property
+    def reflect_table_options(self):
+        # SQLAlchemy 2.1's SQLiteDialect implements get_table_options; 2.0's
+        # does not. The suite expects NotImplementedError when closed, so
+        # follow what the installed SQLAlchemy provides.
+        from sqlalchemy.dialects.sqlite.base import SQLiteDialect
+
+        return exclusions.only_if(
+            lambda config: "get_table_options" in SQLiteDialect.__dict__,
+            "SQLiteDialect.get_table_options arrived in SQLAlchemy 2.1",
+        )
+
+    @property
     def reflects_pk_names(self):
         # SQLite reflects the names of named PRIMARY KEY constraints.
         return exclusions.open()

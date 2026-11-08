@@ -9,9 +9,9 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - **SQLAlchemy dialect compliance suite in CI** — `suite/` runs SQLAlchemy's
-  own dialect test suite against `sqlite+adbc` on every change (903 passed,
-  446 skipped, 0 failed); `docs/compliance.md` lists every exclusion with its
-  reason.
+  own dialect test suite against `sqlite+adbc` on every change (SQLAlchemy
+  2.0: 903 passed, 446 skipped; 2.1: 1022 passed, 400 skipped; 0 failed on
+  both); `docs/compliance.md` lists every exclusion with its reason.
 
 ### Changed
 

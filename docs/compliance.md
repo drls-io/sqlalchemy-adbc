@@ -12,7 +12,8 @@ pytest suite/ --dburi "sqlite+adbc:///suite_sqlite_adbc.db" -p no:cacheprovider
 
 | Date | Dialect | Driver | SQLAlchemy | Passed | Skipped | Failed |
 |---|---|---|---|---:|---:|---:|
-| 2026-11-08 | `sqlite+adbc` | adbc-driver-sqlite 1.11 / 1.13 | 2.0.49 | 903 | 446 | 0 |
+| 2026-11-08 | `sqlite+adbc` | adbc-driver-sqlite 1.11 | 2.0.49 | 903 | 446 | 0 |
+| 2026-11-08 | `sqlite+adbc` | adbc-driver-sqlite 1.13 | 2.1.8 (CI) | 1022 | 400 | 0 |
 
 Skips are requirement-driven: SQLAlchemy skips every test whose
 requirement the dialect declares closed, plus features SQLite itself lacks
@@ -32,7 +33,9 @@ declares the ones specific to this dialect; each is listed below.
 | `duplicate_key_raises_integrity_error` | `adbc-driver-sqlite` before 1.13 surfaces a UNIQUE violation as `InternalError "(unknown error)"`; 1.13 raises `IntegrityError` and the test runs. | driver < 1.13 |
 
 Opened against SuiteRequirements' defaults because SQLite supports them:
-`views`, `reflects_pk_names`.
+`views`, `reflects_pk_names`, and `reflect_table_options` when the installed
+SQLAlchemy's `SQLiteDialect` implements `get_table_options` (2.1 and later;
+the suite expects `NotImplementedError` otherwise).
 
 ## Other backends
 
