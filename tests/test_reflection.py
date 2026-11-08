@@ -8,14 +8,11 @@ and are manually smoke-tested.
 
 from __future__ import annotations
 
-from importlib.metadata import version
 from typing import Any
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import inspect
-
-_ADBC_SQLITE_VERSION = tuple(int(part) for part in version("adbc-driver-sqlite").split(".")[:2])
 
 
 def _make_engine():

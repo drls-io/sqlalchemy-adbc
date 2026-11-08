@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sqlalchemy-adbc"
-version = "0.8.0"
+version = "0.9.0"
 description = "Generic SQLAlchemy dialect for any ADBC driver (Flight SQL, PostgreSQL, SQLite, Snowflake, BigQuery)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -124,3 +124,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+# Marks SQLAlchemy's dialect compliance suite (suite/) applies; registered so
+# pytest does not warn about them.
+markers = [
+    "backend: tests that run against a real database backend",
+    "sparse_driver_backend: tests that run against a subset of drivers",
+    "mypy: SQLAlchemy mypy plugin tests",
+]
