@@ -5,11 +5,18 @@ session (see ``tests/fake_snowflake``). ``snowflake_engine`` runs a test
 twice: against the fake, and against a real account when
 ``DRLS_SNOWFLAKE_URL`` is set (otherwise that cell skips), so the fake and
 Snowflake can be checked against each other.
+
+``flightsql_engine`` connects to the Flight SQL server named by
+``DRLS_FLIGHTSQL_URL`` (CI: a GizmoSQL service container; see
+``tests/test_flightsql_e2e.py``), retrying the first query while the server
+is still starting. ``flightsql_bearer_url`` performs the Flight handshake
+with the URL's credentials and returns the bearer-token form of the URL.
 """
 
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -53,3 +60,59 @@ def snowflake_engine(request: pytest.FixtureRequest) -> Iterator[sa.Engine]:
         engine = attach_fake(sa.create_engine(FAKE_ENGINE_URL), server)
     yield engine
     engine.dispose()
+
+
+# ── Flight SQL (live server, gated) ──────────────────────────────────
+
+
+def wait_for_flightsql(engine: sa.Engine, timeout: float = 60.0) -> None:
+    """Run ``SELECT 1`` until it succeeds or ``timeout`` seconds pass.
+
+    A GitHub Actions service container has no readiness gate the job can
+    wait on (the GizmoSQL image guarantees no curl or wget for a health
+    command), so the first connection absorbs the server's start-up. The
+    last error is re-raised once the deadline passes.
+    """
+    deadline = time.monotonic() + timeout
+    delay = 0.5
+    while True:
+        try:
+            with engine.connect() as c:
+                c.execute(sa.text("SELECT 1")).scalar()
+            return
+        except sa.exc.DBAPIError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 3.0)
+
+
+@pytest.fixture(scope="session")
+def flightsql_url() -> str:
+    url = os.environ.get("DRLS_FLIGHTSQL_URL")
+    if not url:
+        pytest.skip("Requires DRLS_FLIGHTSQL_URL")
+    pytest.importorskip("adbc_driver_flightsql")
+    return url
+
+
+@pytest.fixture(scope="module")
+def flightsql_engine(flightsql_url: str) -> Iterator[sa.Engine]:
+    engine = sa.create_engine(flightsql_url)
+    wait_for_flightsql(engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def flightsql_bearer_url(flightsql_url: str) -> str:
+    """The Flight handshake's bearer token, in our default ``bearer`` URL form."""
+    flight = pytest.importorskip("pyarrow.flight")
+    url = sa.make_url(flightsql_url)
+    tls = str(url.query.get("tls", "true")).lower() not in ("false", "0", "no")
+    scheme = "grpc+tls" if tls else "grpc"
+    host, port = url.host or "localhost", url.port or (443 if tls else 50051)
+    client = flight.FlightClient(f"{scheme}://{host}:{port}")
+    _, header_value = client.authenticate_basic_token(url.username or "", url.password or "")
+    token = header_value.decode().split(" ", 1)[-1]
+    return f"flightsql+adbc://x:{token}@{host}:{port}?tls={'true' if tls else 'false'}"
