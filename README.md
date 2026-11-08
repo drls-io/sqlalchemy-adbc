@@ -85,11 +85,15 @@ emits a `DeprecationWarning` and will be removed in 1.0.
 
 The Flight SQL, Snowflake and BigQuery drivers are Go libraries that read
 `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case) from the process
-environment, so if those are set nothing more is needed. When they are not,
-a `[proxy]` section in the local config file (below) is exported into the
-environment on the first connect. A variable you already set always wins;
-the export is process-wide because that is the only lever the drivers have.
-PostgreSQL (libpq) and SQLite have no HTTP proxy concept.
+environment. **Set them in the shell or launcher that starts Python.** The
+Go runtime snapshots the environment at process start, so a variable written
+later from Python, by this package or anything else, is not seen by the
+drivers. A `[proxy]` section in the local config file (below) is still
+exported into the environment on the first connect: it serves this package's
+own HTTP calls (the OAuth2 token request) and anything in the process that
+reads the environment at request time, and a WARNING is logged so the gap
+is visible. A variable you already set always wins. PostgreSQL (libpq) and
+SQLite have no HTTP proxy concept.
 
 ## Authentication
 
@@ -104,7 +108,9 @@ with `auth_profile=`:
 | `oauth2`    | yes        | yes       | client credentials: `oauth2_token_url=`, URL `client_id:client_secret@` (or a profile); optional `oauth2_scope=`, `oauth2_audience=` |
 
 Flight SQL runs the OAuth2 flow inside the driver and refreshes tokens
-itself. Snowflake receives a token minted by this package per connection.
+itself. Snowflake receives a token minted by this package when each DBAPI
+connection opens (cached until it expires, so a pool does not re-request it);
+the Negotiate ticket on Flight SQL is likewise minted per connection.
 Snowflake's own `authenticator=` DSN options (key pair, Okta, external
 browser) keep working unchanged through the query string.
 
@@ -202,11 +208,34 @@ git clone https://github.com/drls-io/sqlalchemy-adbc
 cd sqlalchemy-adbc
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                 # unit tests; live backends via DRLS_PG_URL / DRLS_SNOWFLAKE_URL
+pytest                 # unit tests + the fake Snowflake endpoint; live backends via DRLS_PG_URL / DRLS_SNOWFLAKE_URL
 ruff check src/ tests/ && ruff format --check src/ tests/
 mypy src tests
 tox                    # same gates across Python 3.11–3.14 × SQLAlchemy 2.0/2.1 (tox.ini)
 ```
+
+### Fake Snowflake endpoint
+
+`tests/fake_snowflake/` is an in-process HTTP server that speaks enough of
+Snowflake's wire protocol for the real `adbc-driver-snowflake` to log in,
+run SQL and reflect metadata, with SQLite executing the statements. Every
+`pytest` run drives the Snowflake dialect through the real driver against
+it: login (password and OAuth2 with a token the fake issued), CRUD and type
+round trips, `executemany`, reflection of tables, views and constraints,
+error propagation, proxy routing and the exact bindings put on the wire.
+The same behaviour suite (`tests/test_snowflake_e2e.py`) runs against a real
+account when `DRLS_SNOWFLAKE_URL` is set, so the fake and Snowflake are
+checked against each other by anyone with an account.
+
+The fake is a model of Snowflake, not Snowflake. It does not reproduce
+Snowflake-only SQL rules (`PARSE_JSON(?)` inside `VALUES` is accepted here
+and rejected there), result chunking, async queries, stages or bulk ingest;
+result column labels of textual SQL follow SQLite (`select id` yields `id`
+where Snowflake yields `ID`); and NUMBER values are limited to what SQLite
+stores exactly (int64, or 15 significant digits), beyond which the fake
+raises a data conversion error rather than return a wrong value. Treat a
+green fake run as "the dialect and driver agree", and the live run as the
+truth.
 
 ## Releasing
 

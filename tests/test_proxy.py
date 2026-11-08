@@ -77,3 +77,19 @@ def test_logs_which_file_set_the_proxy(caplog):
     with caplog.at_level(logging.INFO, logger="sqlalchemy_adbc.proxy"):
         apply_proxy_env(cfg, {})
     assert "config.toml" in caplog.text and "HTTPS_PROXY" in caplog.text
+
+
+def test_warns_that_go_drivers_only_see_the_startup_environment(caplog):
+    # Found with the fake Snowflake endpoint: the Go runtime inside the
+    # drivers snapshots the environment at process start, so an export made
+    # here reaches Python HTTP clients (the OAuth2 token request) but not the
+    # drivers. Say so once, at WARNING, naming the file.
+    import logging
+    from pathlib import Path
+
+    cfg = Config({"https_proxy": "http://p:1"}, {}, Path("/etc/sqlalchemy-adbc/config.toml"))
+    with caplog.at_level(logging.WARNING, logger="sqlalchemy_adbc.proxy"):
+        apply_proxy_env(cfg, {})
+    [record] = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert "started" in record.getMessage() and "config.toml" in record.getMessage()
+    assert "HTTPS_PROXY" in record.getMessage()

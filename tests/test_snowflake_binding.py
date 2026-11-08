@@ -14,6 +14,7 @@ import datetime as dt
 from decimal import Decimal
 
 import pyarrow as pa
+import sqlalchemy as sa
 from sqlalchemy import types as sa_types
 
 from sqlalchemy_adbc.snowflake import ADBCSnowflakeDialect, to_record_batch
@@ -89,3 +90,15 @@ def test_dialect_passes_arrow_batch_to_cursor():
     assert seen["executemany"].schema.types == [pa.int64(), pa.string()]
     d.do_execute(FakeCursor(), "SELECT 1", (), None)
     assert seen["execute"] is None
+
+
+def test_snowflake_has_native_booleans():
+    # Without this SQLAlchemy renders booleans as 0/1, and Snowflake rejects
+    # ``WHERE "OK" IS 0`` (found live by the e2e suite). Snowflake has a
+    # BOOLEAN type with true/false literals.
+    assert d.supports_native_boolean is True
+    t = sa.table("t", sa.column("ok", sa_types.Boolean))
+    sql = str(sa.select(t).where(t.c.ok == sa.true()).compile(dialect=d))
+    assert sql.endswith("WHERE t.ok = true")
+    sql = str(sa.select(t).where(~t.c.ok).compile(dialect=d))
+    assert sql.endswith("WHERE NOT t.ok")

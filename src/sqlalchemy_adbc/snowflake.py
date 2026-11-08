@@ -29,7 +29,7 @@ from sqlalchemy import types as sa_types
 from sqlalchemy.engine.url import URL
 from sqlalchemy.exc import ArgumentError
 
-from sqlalchemy_adbc.auth import require, settings_from_query, token_source_for
+from sqlalchemy_adbc.auth import settings_from_query, token_source_for
 from sqlalchemy_adbc.base import ADBCDialect
 from sqlalchemy_adbc.config import load_config
 from sqlalchemy_adbc.snowflake_types import snowflake_ischema_names
@@ -98,6 +98,9 @@ class ADBCSnowflakeDialect(ADBCDialect):
     # NUMBER is exact; without this SQLAlchemy's Numeric binds ints and
     # Decimals as float and NUMBER(38,0) values above 2**53 lose digits.
     supports_native_decimal = True
+    # Snowflake has BOOLEAN with true/false literals; without this SQLAlchemy
+    # renders booleans as 0/1 and ``WHERE "OK" IS 0`` is a syntax error there.
+    supports_native_boolean = True
     colspecs = {
         sa_types.Date: _IsoDate,
         sa_types.DateTime: _IsoDateTime,
@@ -133,14 +136,19 @@ class ADBCSnowflakeDialect(ADBCDialect):
         if settings.type in ("negotiate", "bearer"):
             raise ArgumentError(f"auth={settings.type} is not supported by the Snowflake driver")
         if settings.type == "oauth2":
-            # The driver takes a static token; we mint and cache one per
-            # connection via client credentials. The URL password was the
-            # client secret, so it must not reach the DSN.
-            require(settings, "oauth2_token_url", "oauth2_client_id", "oauth2_client_secret")
-            kwargs["db_kwargs"] = {
-                _AUTH_TYPE: "auth_oauth",
-                _AUTH_TOKEN: token_source_for(settings).token(),
-            }
+            # The driver takes a static token; we mint one via client
+            # credentials and cache it until expiry. The token is injected in
+            # ``connect`` (per DBAPI connection, see ADBCDialect._connect_hook),
+            # not here. gosnowflake validates the DSN before driver options
+            # apply, so the DSN itself must declare the authenticator or it
+            # demands a password. The URL password was the client secret, so
+            # it must not reach the DSN.
+            source = token_source_for(settings)
+            query["authenticator"] = "oauth"
+            kwargs["db_kwargs"] = {_AUTH_TYPE: "auth_oauth"}
+            self._connect_hook = lambda db_kwargs: db_kwargs.__setitem__(
+                _AUTH_TOKEN, source.token()
+            )
             url_password = None
 
         # SQLAlchemy decodes userinfo but leaves the database path

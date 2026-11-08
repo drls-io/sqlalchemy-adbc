@@ -2,11 +2,15 @@
 
 The Flight SQL, Snowflake and BigQuery drivers are Go libraries loaded
 in-process; Go's HTTP transport and grpc-go read ``HTTP_PROXY``,
-``HTTPS_PROXY`` and ``NO_PROXY`` (either case) from the environment at dial
-time and expose no per-connection proxy option. So the only lever is the
-environment, and the rule is: a variable the user already set always wins;
-the config file only fills gaps. Both spellings are written so Go and any
-Python HTTP client in the same process agree.
+``HTTPS_PROXY`` and ``NO_PROXY`` (either case) and expose no per-connection
+proxy option. The Go runtime, however, snapshots the environment when the
+process starts: a variable written later from Python is invisible to it, on
+macOS and Linux alike (verified against a fake endpoint, 2026-11-08). So the
+export here serves the package's own HTTP calls (the OAuth2 token request,
+through ``urllib``) and anything else in the process that reads
+``os.environ`` at request time, and a WARNING says that the drivers need the
+variables set by the shell or launcher. A variable the user already set
+always wins; the config file only fills gaps. Both spellings are written.
 """
 
 from __future__ import annotations
@@ -43,8 +47,11 @@ def apply_proxy_env(
     if written:
         # Values are proxy URLs, not secrets; the path makes a surprising
         # proxy traceable to the file that set it.
-        log.info(
-            "exported proxy variables %s from %s",
+        log.warning(
+            "exported proxy variables %s from %s; the Go-based ADBC drivers "
+            "(Flight SQL, Snowflake, BigQuery) only read the environment the "
+            "process was started with, so set these in the shell or launcher "
+            "for them to take effect there",
             sorted(written),
             config.path or "<no config file>",
         )

@@ -51,6 +51,9 @@ dev = [
     # Local matrix runner; see tox.ini.
     "tox>=4",
     "adbc-driver-sqlite>=1.0",
+    # The fake Snowflake endpoint (tests/fake_snowflake) drives the real
+    # driver, so every CI cell covers the Snowflake dialect end to end.
+    "adbc-driver-snowflake>=1.0",
     # Alembic autogenerate tests (test_alembic_autogenerate.py) rely on
     # the Inspector contract we implemented in #1 — pinning the dev
     # pin ensures CI exercises that integration path.

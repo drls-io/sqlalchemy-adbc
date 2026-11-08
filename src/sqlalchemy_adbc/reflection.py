@@ -170,7 +170,13 @@ def columns_from_table(
     dialect-specific types (JSONB, UUID, ...) reflect correctly.
     """
     out: list[dict[str, Any]] = []
-    for col in tbl.get("table_columns") or []:
+    columns = list(tbl.get("table_columns") or [])
+    # Snowflake's driver aggregates information_schema.columns without an
+    # ORDER BY, so the list can arrive in any order; the ordinal position
+    # is authoritative when every column carries one.
+    if columns and all(isinstance(c.get("ordinal_position"), int) for c in columns):
+        columns.sort(key=lambda c: c["ordinal_position"])
+    for col in columns:
         name = col.get("column_name")
         if not name:
             continue
@@ -264,34 +270,36 @@ def unique_constraints_from_table(tbl: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def table_names_from_tree(tree: list[dict[str, Any]], schema: str | None = None) -> list[str]:
-    """All table names (not views, not indexes) for one schema."""
+# ``table_type`` spellings differ per driver: SQLite reports ``table`` /
+# ``view`` / ``index``, Snowflake and BigQuery ``BASE TABLE`` / ``VIEW``.
+# Materialized views are deliberately not plain views: SQLAlchemy reports
+# them through ``get_materialized_view_names`` instead.
+_TABLE_TYPES = {"table", "base table", "base_table"}
+_VIEW_TYPES = {"view"}
+
+
+def _names_of_type(tree: list[dict[str, Any]], kinds: set[str], schema: str | None) -> list[str]:
     names: list[str] = []
     for catalog in tree:
         for sch in catalog.get("catalog_db_schemas") or []:
             if schema is not None and sch.get("db_schema_name") != schema:
                 continue
             for tbl in sch.get("db_schema_tables") or []:
-                if tbl.get("table_type") == "table":
+                if str(tbl.get("table_type") or "").lower() in kinds:
                     nm = tbl.get("table_name")
                     if nm:
                         names.append(nm)
     return names
+
+
+def table_names_from_tree(tree: list[dict[str, Any]], schema: str | None = None) -> list[str]:
+    """All table names (not views, not indexes) for one schema."""
+    return _names_of_type(tree, _TABLE_TYPES, schema)
 
 
 def view_names_from_tree(tree: list[dict[str, Any]], schema: str | None = None) -> list[str]:
     """All view names for one schema."""
-    names: list[str] = []
-    for catalog in tree:
-        for sch in catalog.get("catalog_db_schemas") or []:
-            if schema is not None and sch.get("db_schema_name") != schema:
-                continue
-            for tbl in sch.get("db_schema_tables") or []:
-                if tbl.get("table_type") == "view":
-                    nm = tbl.get("table_name")
-                    if nm:
-                        names.append(nm)
-    return names
+    return _names_of_type(tree, _VIEW_TYPES, schema)
 
 
 def schema_names_from_tree(tree: list[dict[str, Any]]) -> list[str]:

@@ -100,7 +100,10 @@ class ADBCFlightSQLDialect(ADBCDialect):
             db_kwargs["username"] = url.username
             db_kwargs["password"] = url.password
         elif settings.type == "negotiate":
-            db_kwargs[auth_key] = negotiate_header(settings.spn or f"HTTP@{host}")
+            # A SPNEGO token is single use; mint one per DBAPI connection
+            # (see ADBCDialect._connect_hook), not once per engine.
+            spn = settings.spn or f"HTTP@{host}"
+            self._connect_hook = lambda kw: kw.__setitem__(auth_key, negotiate_header(spn))
         elif settings.type == "oauth2":
             # The driver runs the OAuth2 flow itself and refreshes tokens.
             require(settings, "oauth2_token_url", "oauth2_client_id", "oauth2_client_secret")

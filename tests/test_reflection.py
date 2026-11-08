@@ -544,3 +544,71 @@ def test_dialect_methods_work_without_info_cache():
     with engine.connect() as conn:
         cols = engine.dialect.get_columns(conn, "users")
     assert [c["name"] for c in cols] == ["id", "email", "name", "created_at"]
+
+
+# ── table_type spellings differ per driver ───────────────────────────
+#
+# SQLite's driver reports ``table``/``view``/``index``; Snowflake's (and
+# BigQuery's) report ``BASE TABLE``/``VIEW``. Found by the fake Snowflake
+# endpoint: ``Inspector.get_table_names()`` was empty on Snowflake.
+
+
+def _tree_with_types(*entries: tuple[str, str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "catalog_name": "DB",
+            "catalog_db_schemas": [
+                {
+                    "db_schema_name": "S",
+                    "db_schema_tables": [
+                        {"table_name": name, "table_type": kind} for name, kind in entries
+                    ],
+                }
+            ],
+        }
+    ]
+
+
+def test_table_and_view_names_accept_snowflake_table_type_spellings():
+    from sqlalchemy_adbc.reflection import table_names_from_tree, view_names_from_tree
+
+    tree = _tree_with_types(
+        ("T1", "BASE TABLE"), ("V1", "VIEW"), ("t2", "table"), ("v2", "view"), ("ix", "index")
+    )
+    assert table_names_from_tree(tree, schema="S") == ["T1", "t2"]
+    assert view_names_from_tree(tree, schema="S") == ["V1", "v2"]
+    assert table_names_from_tree(tree, schema="OTHER") == []
+
+
+def test_columns_follow_ordinal_position_not_arrival_order():
+    # Snowflake's driver aggregates information_schema.columns with ARRAY_AGG
+    # and no ORDER BY, so the list arrives in arbitrary order. Found live by
+    # the e2e suite: a two-column view reflected as ['NAME', 'ID'].
+    from sqlalchemy_adbc.reflection import columns_from_table
+
+    tbl = {
+        "table_name": "V",
+        "table_type": "VIEW",
+        "table_columns": [
+            {"column_name": "NAME", "ordinal_position": 2, "xdbc_type_name": "TEXT"},
+            {"column_name": "ID", "ordinal_position": 1, "xdbc_type_name": "NUMBER"},
+            {"column_name": "Z", "ordinal_position": 3, "xdbc_type_name": "TEXT"},
+        ],
+    }
+    assert [c["name"] for c in columns_from_table(tbl)] == ["ID", "NAME", "Z"]
+    # Without positions (some drivers omit them) arrival order is kept.
+    for col in tbl["table_columns"]:
+        col.pop("ordinal_position")
+    assert [c["name"] for c in columns_from_table(tbl)] == ["NAME", "ID", "Z"]
+
+
+def test_materialized_views_are_not_plain_views():
+    # SQLAlchemy keeps materialized views under get_materialized_view_names();
+    # get_view_names() must not start returning them for the PostgreSQL driver.
+    from sqlalchemy_adbc.reflection import table_names_from_tree, view_names_from_tree
+
+    tree = _tree_with_types(
+        ("V", "view"), ("MV", "materialized view"), ("MV2", "materialized_view")
+    )
+    assert view_names_from_tree(tree, schema="S") == ["V"]
+    assert table_names_from_tree(tree, schema="S") == []
