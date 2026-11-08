@@ -208,12 +208,6 @@ class ADBCConnectionMixin(DefaultDialect):
 
         Subclasses should override ``build_connect_args`` instead of this.
         """
-        from sqlalchemy_adbc.proxy import ensure_proxy_env_once
-
-        # Export [proxy] from the local config into the environment for the
-        # package's own HTTP calls (OAuth2 token requests). The Go drivers
-        # read the environment they were started with; see proxy.py.
-        ensure_proxy_env_once()
         self._connect_hook = None
         if url.drivername.startswith("adbc+"):
             backend = url.get_driver_name()

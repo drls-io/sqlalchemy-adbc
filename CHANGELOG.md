@@ -6,6 +6,15 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **The `[proxy]` config section.** It exported `HTTP_PROXY` / `HTTPS_PROXY` /
+  `NO_PROXY` into the environment on the first connect, but the Go-based
+  drivers (Flight SQL, Snowflake, BigQuery) only read the environment the
+  process was started with, so it never routed them (verified on macOS and
+  Linux, see 0.6.0). The section is now ignored with a `DeprecationWarning`;
+  set the variables in the shell or launcher. `sqlalchemy_adbc.proxy` is gone
+  and `Config` has no `proxy` field.
 ### Added
 
 - **SQLAlchemy dialect compliance suite in CI** — `suite/` runs SQLAlchemy's
