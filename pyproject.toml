@@ -124,3 +124,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+# Marks SQLAlchemy's dialect compliance suite (suite/) applies; registered so
+# pytest does not warn about them.
+markers = [
+    "backend: tests that run against a real database backend",
+    "sparse_driver_backend: tests that run against a subset of drivers",
+    "mypy: SQLAlchemy mypy plugin tests",
+]

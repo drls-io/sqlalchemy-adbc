@@ -14,8 +14,13 @@ from __future__ import annotations
 import os
 
 import pytest
-from sqlalchemy import event
-from sqlalchemy.dialects import registry
+
+# Before anything imports sqlalchemy.testing.assertions (the provisioning
+# modules below do), or the suite loses assertion introspection.
+pytest.register_assert_rewrite("sqlalchemy.testing.assertions")
+
+from sqlalchemy import event  # noqa: E402
+from sqlalchemy.dialects import registry  # noqa: E402
 
 registry.register("sqlite.adbc", "sqlalchemy_adbc.sqlite", "ADBCSQLiteDialect")
 registry.register("postgresql.adbc", "sqlalchemy_adbc.postgresql", "ADBCPostgreSQLDialect")
@@ -81,9 +86,20 @@ def _sqlite_adbc_post_configure_engine(url, engine, follower_ident):
 def _sqlite_adbc_post_configure_testing_engine(url, engine, options, scope):
     _sqlalchemy_post_configure_testing_engine(url, engine, options, scope)
     if engine.dialect.driver == "adbc" and not options.get("sqlite_share_pool"):
-        _attach_test_schema(engine, _attach_path(engine, None))
+        # Same file the main engine attached (xdist followers carry their
+        # ident in the URL's database name, which the main engine used too).
+        _attach_test_schema(engine, _attach_path(engine, _follower_ident_from(url)))
 
 
-pytest.register_assert_rewrite("sqlalchemy.testing.assertions")
+def _follower_ident_from(url):
+    """The xdist follower ident SQLAlchemy encodes in the follower URL, if any."""
+    database = url.database or ""
+    marker = "_suite_sqlite_adbc"
+    return (
+        database.split(marker)[0].rsplit("/", 1)[-1]
+        if marker in database and not database.startswith("suite_")
+        else None
+    )
+
 
 from sqlalchemy.testing.plugin.pytestplugin import *  # noqa: E402,F401,F403

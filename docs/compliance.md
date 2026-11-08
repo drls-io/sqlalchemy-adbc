@@ -32,6 +32,14 @@ declares the ones specific to this dialect; each is listed below.
 | `implicitly_named_constraints` | SQLite does not assign names to unnamed constraints (as in SQLAlchemy's own requirements). | SQLite |
 | `duplicate_key_raises_integrity_error` | `adbc-driver-sqlite` before 1.13 surfaces a UNIQUE violation as `InternalError "(unknown error)"`; 1.13 raises `IntegrityError` and the test runs. | driver < 1.13 |
 
+Behaviours that stay unsupported and are closed by SuiteRequirements'
+defaults, noted here because pysqlite supports them: `regexp_match`
+(pysqlite registers a Python `REGEXP` function on connect; an ADBC
+connection cannot, so `column.regexp_match()` fails at runtime with
+"no such function: REGEXP") and `isolation_level="AUTOCOMMIT"` (the SQLite
+dialect's isolation handling targets the pysqlite connection object;
+`READ UNCOMMITTED` and `SERIALIZABLE` work).
+
 Opened against SuiteRequirements' defaults because SQLite supports them:
 `views`, `reflects_pk_names`, and `reflect_table_options` when the installed
 SQLAlchemy's `SQLiteDialect` implements `get_table_options` (2.1 and later;
