@@ -19,10 +19,27 @@ def test_project_from_database_segment():
 
 
 def test_project_plus_dataset():
+    """``?dataset=`` is the documented spelling; the driver only knows its own
+    option key and rejects an unknown ``dataset`` option (found live)."""
     _, kwargs = _build("bigquery+adbc:///my-project?dataset=events")
     db = kwargs["db_kwargs"]
     assert db["adbc.bigquery.sql.project_id"] == "my-project"
-    assert db["dataset"] == "events"
+    assert db["adbc.bigquery.sql.dataset_id"] == "events"
+    assert "dataset" not in db
+
+
+def test_location_and_credentials_path_map_to_driver_options():
+    _, kwargs = _build("bigquery+adbc:///p?dataset=d&location=EU&credentials_path=%2Fetc%2Fsa.json")
+    db = kwargs["db_kwargs"]
+    assert db["adbc.bigquery.sql.location"] == "EU"
+    assert db["adbc.bigquery.sql.auth_type"] == "adbc.bigquery.sql.auth_type.json_credential_file"
+    assert db["adbc.bigquery.sql.auth_credentials"] == "/etc/sa.json"
+    assert "credentials_path" not in db and "location" not in db
+
+
+def test_driver_option_keys_pass_through_and_win():
+    _, kwargs = _build("bigquery+adbc:///p?dataset=d&adbc.bigquery.sql.dataset_id=explicit")
+    assert kwargs["db_kwargs"]["adbc.bigquery.sql.dataset_id"] == "explicit"
 
 
 def test_only_query_params():
