@@ -496,7 +496,14 @@ class Session:
                 return status_result("Statement executed successfully.")
             if kind in ("BEGIN", "COMMIT", "ROLLBACK"):
                 return self._transaction(kind)
-            return self._run_sql(sql, kind, coerce_bindings(bindings))
+            if kind == "SHOW":
+                return Catalog(self).show(sql)
+            if kind == "DESC":
+                return Catalog(self).describe(sql)
+            params = coerce_bindings(bindings)
+            if kind == "SELECT" and is_get_objects_query(sql):
+                return Catalog(self).get_objects(sql, params if isinstance(params, dict) else {})
+            return self._run_sql(sql, kind, params)
 
     def _transaction(self, kind: str) -> Result:
         try:
@@ -693,3 +700,402 @@ def _expression_type(
     if expr[0].kind == "word" and expr[0].upper in _FUNCTION_TYPES and len(expr) == 1:
         return (_FUNCTION_TYPES[expr[0].upper], True)
     return None
+
+
+# ── catalog ──────────────────────────────────────────────────────────
+
+
+def ilike(value: str, pattern: str, escape: str | None = "!") -> bool:
+    """Snowflake ``ILIKE`` (``%``, ``_``, optional ``ESCAPE`` character)."""
+    regex = []
+    i = 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if escape and ch == escape and i + 1 < len(pattern):
+            regex.append(re.escape(pattern[i + 1]))
+            i += 2
+            continue
+        if ch == "%":
+            regex.append(".*")
+        elif ch == "_":
+            regex.append(".")
+        else:
+            regex.append(re.escape(ch))
+        i += 1
+    return re.fullmatch("".join(regex), value, re.IGNORECASE | re.DOTALL) is not None
+
+
+@dataclass
+class ColumnInfo:
+    name: str
+    type: SnowflakeType
+    nullable: bool
+    position: int
+    default: str | None = None
+
+
+@dataclass
+class TableInfo:
+    name: str
+    kind: str  # TABLE | VIEW
+    columns: list[ColumnInfo]
+    primary_key: list[str]
+    uniques: list[list[str]]
+    foreign_keys: list[
+        tuple[list[str], str, list[str]]
+    ]  # (columns, referred table, referred columns)
+
+    @property
+    def table_type(self) -> str:
+        return "BASE TABLE" if self.kind == "TABLE" else "VIEW"
+
+
+_SHOW_RE = re.compile(
+    r"^SHOW\s+(?:TERSE\s+)?(?P<obj>DATABASES|SCHEMAS|OBJECTS|TABLES|VIEWS|PRIMARY\s+KEYS|UNIQUE\s+KEYS|"
+    r"IMPORTED\s+KEYS|EXPORTED\s+KEYS|COLUMNS)"
+    r"(?:\s+LIKE\s+'(?P<like>(?:[^']|'')*)')?"
+    r"(?:\s+IN\s+(?P<scope>ACCOUNT|DATABASE|SCHEMA|TABLE)(?:\s+(?P<target>[^\s]+))?)?"
+    r"(?:\s+STARTS\s+WITH\s+'(?P<starts>(?:[^']|'')*)')?"
+    r"(?:\s+LIMIT\s+\d+)?\s*;?$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+_EMPTY_KEYS_COLUMNS = [
+    "created_on",
+    "database_name",
+    "schema_name",
+    "table_name",
+    "column_name",
+    "key_sequence",
+    "constraint_name",
+    "rely",
+    "comment",
+]
+_EMPTY_FK_COLUMNS = [
+    "fk_database_name",
+    "fk_schema_name",
+    "fk_table_name",
+    "fk_name",
+    "fk_column_name",
+    "pk_database_name",
+    "pk_schema_name",
+    "pk_table_name",
+    "pk_column_name",
+    "key_sequence",
+]
+_EMPTY_COLUMNS_COLUMNS = ["database_name", "schema_name", "table_name", "column_name", "data_type"]
+_SHOW_TERSE_COLUMNS = ["created_on", "name", "kind", "database_name", "schema_name"]
+_DESC_COLUMNS = [
+    "name",
+    "type",
+    "kind",
+    "null?",
+    "default",
+    "primary key",
+    "unique key",
+    "check",
+    "expression",
+    "comment",
+    "policy name",
+    "privacy domain",
+]
+_CREATED_ON = "2026-01-01 00:00:00.000 -0800"
+
+
+def _text_table(names: list[str], rows: list[list[Any]]) -> Result:
+    columns = [(n, _STATUS_TYPE, [r[i] for r in rows]) for i, n in enumerate(names)]
+    rowtype, b64 = encode_rowset(columns)
+    return Result(rowtype, b64, STATEMENT_SELECT, len(rows))
+
+
+def _strip_comments(sql: str) -> str:
+    return "".join(t.text for t in tokenize(sql) if t.kind != "comment").strip()
+
+
+def _split_qualified(target: str) -> list[str]:
+    toks = [t for t in tokenize(target) if t.kind in ("word", "quoted")]
+    return [t.ident() or "" for t in toks]
+
+
+def is_get_objects_query(sql: str) -> bool:
+    lowered = sql.lower()
+    return "get_objects" in lowered and (
+        "result_scan" in lowered or "information_schema" in lowered
+    )
+
+
+class Catalog:
+    """Metadata answers (SHOW, DESC, GetObjects) computed from SQLite's own schema."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+        self.database = session.database.name
+        self.schema = session.schema
+
+    @property
+    def schemas(self) -> list[str]:
+        return [self.schema, "INFORMATION_SCHEMA"]
+
+    # ── introspection ────────────────────────────────────────────────
+
+    def tables(self) -> list[TableInfo]:
+        conn = self.session.conn
+        rows = conn.execute(
+            "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        return [
+            self._table(str(name), "TABLE" if kind == "table" else "VIEW") for name, kind in rows
+        ]
+
+    def table(self, name: str) -> TableInfo | None:
+        for t in self.tables():
+            if t.name.upper() == name.upper():
+                return t
+        return None
+
+    def _table(self, name: str, kind: str) -> TableInfo:
+        conn = self.session.conn
+        quoted = '"' + name.replace('"', '""') + '"'
+        columns: list[ColumnInfo] = []
+        pk: list[tuple[int, str]] = []
+        for row in conn.execute(f"PRAGMA table_xinfo({quoted})").fetchall():
+            cid, cname, ctype, notnull, dflt, pkpos, hidden = row[:7]
+            if hidden == 2:
+                continue
+            columns.append(
+                ColumnInfo(
+                    str(cname),
+                    parse_type(str(ctype or "")),
+                    nullable=not notnull and not pkpos,
+                    position=len(columns) + 1,
+                    default=None if dflt is None else str(dflt),
+                )
+            )
+            if pkpos:
+                pk.append((int(pkpos), str(cname)))
+        uniques: list[list[str]] = []
+        if kind == "TABLE":
+            for idx in conn.execute(f"PRAGMA index_list({quoted})").fetchall():
+                if idx[3] == "u":
+                    info = conn.execute(f'PRAGMA index_info("{idx[1]}")').fetchall()
+                    uniques.append([str(r[2]) for r in sorted(info, key=lambda r: r[0])])
+        fks: dict[int, tuple[list[str], str, list[str | None]]] = {}
+        if kind == "TABLE":
+            for row in conn.execute(f"PRAGMA foreign_key_list({quoted})").fetchall():
+                fk_id, _seq, ref_table, col_from, col_to = (
+                    row[0],
+                    row[1],
+                    str(row[2]),
+                    str(row[3]),
+                    row[4],
+                )
+                entry = fks.setdefault(int(fk_id), ([], ref_table, []))
+                entry[0].append(col_from)
+                entry[2].append(None if col_to is None else str(col_to))
+        foreign_keys: list[tuple[list[str], str, list[str]]] = []
+        for cols, ref_table, ref_cols in fks.values():
+            if any(c is None for c in ref_cols):
+                ref = self.table(ref_table)
+                ref_cols = list(ref.primary_key) if ref else []
+            foreign_keys.append((cols, ref_table, [c for c in ref_cols if c is not None]))
+        return TableInfo(
+            name=name,
+            kind=kind,
+            columns=columns,
+            primary_key=[c for _, c in sorted(pk)],
+            uniques=uniques,
+            foreign_keys=foreign_keys,
+        )
+
+    # ── SHOW ─────────────────────────────────────────────────────────
+
+    def show(self, sql: str) -> Result:
+        m = _SHOW_RE.match(_strip_comments(sql))
+        if not m:
+            raise SnowflakeError(f"SQL compilation error:\nunsupported SHOW statement: {sql!r}")
+        obj = " ".join(m.group("obj").upper().split())
+        like = (m.group("like") or "").replace("''", "'") or None
+        starts = (m.group("starts") or "").replace("''", "'") or None
+        scope = (m.group("scope") or "ACCOUNT").upper()
+        target = _split_qualified(m.group("target") or "")
+        if obj in ("PRIMARY KEYS", "UNIQUE KEYS"):
+            return _text_table(_EMPTY_KEYS_COLUMNS, [])
+        if obj in ("IMPORTED KEYS", "EXPORTED KEYS"):
+            return _text_table(_EMPTY_FK_COLUMNS, [])
+        if obj == "COLUMNS":
+            return _text_table(_EMPTY_COLUMNS_COLUMNS, [])
+
+        def wanted(name: str) -> bool:
+            if like is not None and not ilike(name, like, escape=None):
+                return False
+            return starts is None or name.startswith(starts)
+
+        in_db = scope == "ACCOUNT" or (len(target) >= 1 and target[0].upper() == self.database)
+        rows: list[list[Any]] = []
+        if obj == "DATABASES":
+            if wanted(self.database):
+                rows.append([_CREATED_ON, self.database, "STANDARD", self.database, None])
+        elif obj == "SCHEMAS":
+            if in_db and scope in ("ACCOUNT", "DATABASE"):
+                rows = [[_CREATED_ON, s, None, self.database, s] for s in self.schemas if wanted(s)]
+        else:
+            schema_ok = True
+            if scope == "SCHEMA":
+                parts = target
+                schema_ok = len(parts) >= 1 and parts[-1].upper() == self.schema
+                if len(parts) == 2:
+                    schema_ok = schema_ok and parts[0].upper() == self.database
+            if in_db and schema_ok:
+                kinds = {"OBJECTS": ("TABLE", "VIEW"), "TABLES": ("TABLE",), "VIEWS": ("VIEW",)}[
+                    obj
+                ]
+                rows = [
+                    [_CREATED_ON, t.name, t.kind, self.database, self.schema]
+                    for t in self.tables()
+                    if t.kind in kinds and wanted(t.name)
+                ]
+        return _text_table(_SHOW_TERSE_COLUMNS, rows)
+
+    # ── DESC ─────────────────────────────────────────────────────────
+
+    def describe(self, sql: str) -> Result:
+        words = [t for t in _significant(tokenize(sql)) if t.kind in ("word", "quoted")]
+        name = words[-1].ident() if words else None
+        table = self.table(name) if name else None
+        if table is None:
+            raise SnowflakeError(
+                f"SQL compilation error:\nTable '{name}' does not exist or not authorized.",
+                "002003",
+                "42S02",
+            )
+        unique_cols = {c for u in table.uniques for c in u}
+        rows = [
+            [
+                c.name,
+                c.type.declared(),
+                "COLUMN",
+                "Y" if c.nullable else "N",
+                c.default,
+                "Y" if c.name in table.primary_key else "N",
+                "Y" if c.name in unique_cols else "N",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+            for c in table.columns
+        ]
+        return _text_table(_DESC_COLUMNS, rows)
+
+    # ── GetObjects ───────────────────────────────────────────────────
+
+    def get_objects(self, sql: str, bindings: dict[str, Any]) -> Result:
+        squashed = " ".join(sql.split())
+        if "'catalog_db_schemas': null" in squashed:
+            depth = "catalogs"
+        elif "'db_schema_tables': null" in squashed:
+            depth = "db_schemas"
+        elif "'table_columns': null" in squashed:
+            depth = "tables"
+        else:
+            depth = "all"
+        escape = "!" if "ESCAPE '!'" in squashed.upper() else None
+
+        def pattern(key: str) -> str:
+            value = bindings.get(key)
+            return "%" if value is None else str(value)
+
+        def match(name: str, key: str) -> bool:
+            return ilike(name, pattern(key), escape=escape)
+
+        docs: list[str] = []
+        if not match(self.database, "CATALOG"):
+            return _get_objects_result(docs)
+        catalog: dict[str, Any] = {"catalog_name": self.database, "catalog_db_schemas": None}
+        if depth != "catalogs":
+            schemas = []
+            for s in self.schemas:
+                if not match(s, "DB_SCHEMA"):
+                    continue
+                entry: dict[str, Any] = {"db_schema_name": s, "db_schema_tables": None}
+                if depth != "db_schemas":
+                    entry["db_schema_tables"] = (
+                        [
+                            self._table_doc(t, depth, match)
+                            for t in self.tables()
+                            if match(t.name, "TABLE")
+                        ]
+                        if s == self.schema
+                        else []
+                    )
+                schemas.append(entry)
+            catalog["catalog_db_schemas"] = schemas
+        docs.append(json.dumps(catalog))
+        return _get_objects_result(docs)
+
+    def _table_doc(self, t: TableInfo, depth: str, match: Any) -> dict[str, Any]:
+        doc: dict[str, Any] = {
+            "table_name": t.name,
+            "table_type": t.table_type,
+            "table_columns": None,
+            "table_constraints": None,
+        }
+        if depth != "all":
+            return doc
+        doc["table_columns"] = [
+            {
+                "column_name": c.name,
+                "ordinal_position": c.position,
+                "remarks": None,
+                **c.type.xdbc(),
+                "xdbc_is_nullable": "YES" if c.nullable else "NO",
+                "xdbc_nullable": 1 if c.nullable else 0,
+            }
+            for c in t.columns
+            if match(c.name, "COLUMN")
+        ]
+        constraints: list[dict[str, Any]] = []
+        if t.primary_key:
+            constraints.append(
+                {
+                    "constraint_name": f"SYS_CONSTRAINT_{t.name}_PK",
+                    "constraint_type": "PRIMARY KEY",
+                    "constraint_column_names": list(t.primary_key),
+                    "constraint_column_usage": [],
+                }
+            )
+        for i, cols in enumerate(t.uniques, 1):
+            constraints.append(
+                {
+                    "constraint_name": f"SYS_CONSTRAINT_{t.name}_UK{i}",
+                    "constraint_type": "UNIQUE",
+                    "constraint_column_names": cols,
+                    "constraint_column_usage": [],
+                }
+            )
+        for i, (cols, ref_table, ref_cols) in enumerate(t.foreign_keys, 1):
+            constraints.append(
+                {
+                    "constraint_name": f"SYS_CONSTRAINT_{t.name}_FK{i}",
+                    "constraint_type": "FOREIGN KEY",
+                    "constraint_column_names": cols,
+                    "constraint_column_usage": [
+                        {
+                            "fk_catalog": self.database,
+                            "fk_db_schema": self.schema,
+                            "fk_table": ref_table,
+                            "fk_column_name": rc,
+                        }
+                        for rc in ref_cols
+                    ],
+                }
+            )
+        doc["table_constraints"] = constraints
+        return doc
+
+
+def _get_objects_result(docs: list[str]) -> Result:
+    rowtype, b64 = encode_rowset([("get_objects", SnowflakeType("OBJECT"), docs)])
+    return Result(rowtype, b64, STATEMENT_SELECT, len(docs))

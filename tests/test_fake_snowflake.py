@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import io
+import json
 from decimal import Decimal
 from typing import Any
 
@@ -440,3 +441,256 @@ def test_errors_map_to_snowflake_codes(session):
     with pytest.raises(SnowflakeError) as e:
         session.execute("SELEC 1")
     assert e.value.code == "001003" and e.value.sql_state == "42000"
+
+
+# ── sqlengine.py: catalog answers ────────────────────────────────────
+
+
+def test_ilike_escape_and_wildcards():
+    from tests.fake_snowflake.sqlengine import ilike
+
+    assert ilike("ABC", "a%") and ilike("A_B", "A!_B") and not ilike("AXB", "A!_B")
+    assert ilike("AXB", "A_B") and ilike("anything", "%") and not ilike("", "_")
+    assert ilike("50%", "50!%") and not ilike("500", "50!%")
+    assert ilike("a.b", "a.b") and not ilike("aXb", "a.b")
+    assert ilike("A\\B", "A\\B", escape=None)
+
+
+def _setup_catalog(session):
+    session.execute(
+        'CREATE TABLE "P" ("ID" NUMBER(38,0) NOT NULL PRIMARY KEY, "CODE" VARCHAR(10), UNIQUE ("CODE"))'
+    )
+    session.execute(
+        'CREATE TABLE "C" ("ID" INT PRIMARY KEY, "PID" INT REFERENCES "P" ("ID"), "V" VARIANT, '
+        '"TS" TIMESTAMP_TZ, "S" VARCHAR(50) NOT NULL)'
+    )
+    session.execute('CREATE VIEW "VW" AS SELECT "ID", "CODE" FROM "P"')
+
+
+def test_show_terse_objects_and_schemas(session):
+    _setup_catalog(session)
+    r = session.execute("SHOW TERSE /* ADBC:getObjects */ OBJECTS IN ACCOUNT")
+    tbl = decode_rowset(r.rowset_b64)
+    assert [c["name"] for c in r.rowtype] == [
+        "created_on",
+        "name",
+        "kind",
+        "database_name",
+        "schema_name",
+    ]
+    assert sorted(
+        zip(tbl.column("name").to_pylist(), tbl.column("kind").to_pylist(), strict=True)
+    ) == [
+        ("C", "TABLE"),
+        ("P", "TABLE"),
+        ("VW", "VIEW"),
+    ]
+    assert set(tbl.column("schema_name").to_pylist()) == {"PUBLIC"}
+    assert set(tbl.column("database_name").to_pylist()) == {"FAKEDB"}
+    r = session.execute("SHOW TERSE /* ADBC:getObjects */ TABLES LIKE 'P' IN SCHEMA FAKEDB.PUBLIC")
+    assert decode_rowset(r.rowset_b64).column("name").to_pylist() == ["P"]
+    r = session.execute('SHOW TERSE /* ADBC:getObjects */ TABLES IN SCHEMA "FAKEDB"."PUBLIC"')
+    assert sorted(decode_rowset(r.rowset_b64).column("name").to_pylist()) == ["C", "P"]
+    r = session.execute("SHOW TERSE /* ADBC:getObjects */ VIEWS IN DATABASE FAKEDB STARTS WITH 'V'")
+    assert decode_rowset(r.rowset_b64).column("name").to_pylist() == ["VW"]
+    r = session.execute("SHOW TERSE /* ADBC:getObjects */ OBJECTS IN SCHEMA FAKEDB.OTHER")
+    assert r.total == 0
+    r = session.execute("SHOW TERSE /* ADBC:getObjects */ OBJECTS LIKE 'c' IN ACCOUNT")
+    assert decode_rowset(r.rowset_b64).column("name").to_pylist() == ["C"]
+    r = session.execute("SHOW TERSE /* ADBC:getObjects */ SCHEMAS IN ACCOUNT")
+    assert sorted(decode_rowset(r.rowset_b64).column("name").to_pylist()) == [
+        "INFORMATION_SCHEMA",
+        "PUBLIC",
+    ]
+    assert [c["name"] for c in r.rowtype] == [
+        "created_on",
+        "name",
+        "kind",
+        "database_name",
+        "schema_name",
+    ]
+    r = session.execute("SHOW TERSE /* ADBC:getObjects */ SCHEMAS LIKE 'PUBLIC' IN ACCOUNT")
+    assert decode_rowset(r.rowset_b64).column("name").to_pylist() == ["PUBLIC"]
+    r = session.execute("SHOW TERSE /* ADBC:getObjects */ DATABASES IN ACCOUNT")
+    assert decode_rowset(r.rowset_b64).column("name").to_pylist() == ["FAKEDB"]
+
+
+def test_show_keys_and_columns_return_empty_typed_results(session):
+    for sql in [
+        "SHOW PRIMARY KEYS /* ADBC:getObjectsTables */ IN ACCOUNT",
+        "SHOW UNIQUE KEYS /* ADBC:getObjectsTables */ IN SCHEMA FAKEDB.PUBLIC",
+        "SHOW IMPORTED KEYS /* ADBC:getObjectsTables */ IN ACCOUNT",
+        "SHOW COLUMNS /* ADBC:getObjects */ IN ACCOUNT",
+    ]:
+        r = session.execute(sql)
+        assert r.total == 0 and r.rowtype
+    r = session.execute("SHOW IMPORTED KEYS /* ADBC:getObjectsTables */ IN ACCOUNT")
+    assert [c["name"] for c in r.rowtype][:4] == [
+        "fk_database_name",
+        "fk_schema_name",
+        "fk_table_name",
+        "fk_name",
+    ]
+
+
+GET_OBJECTS_ALL = (
+    "-- Licensed to the Apache Software Foundation (ASF) under one\n"
+    "WITH columns AS (SELECT table_catalog, ARRAY_AGG({'column_name': column_name}) table_columns, "
+    "FROM information_schema.columns WHERE table_catalog ILIKE :CATALOG AND table_schema ILIKE :DB_SCHEMA "
+    "AND table_name ILIKE :TABLE AND column_name ILIKE :COLUMN GROUP BY table_catalog) "
+    "SELECT { 'catalog_name': database_name, 'catalog_db_schemas': ARRAY_AGG(NULLIF({ "
+    "'db_schema_name': schema_name, 'db_schema_tables': db_schema_tables }, {})) } get_objects "
+    "FROM information_schema.databases LEFT JOIN db_schemas ON database_name = catalog_name "
+    "WHERE database_name ILIKE :CATALOG GROUP BY database_name;"
+)
+GET_OBJECTS_TABLES = (
+    'WITH tables AS (SELECT "database_name" "catalog_name", ARRAY_AGG({ \'table_name\': "name", '
+    "'table_type': \"kind\", 'table_constraints': null, 'table_columns': null }) db_schema_tables "
+    "FROM TABLE(RESULT_SCAN(:SHOW_TABLE_QUERY_ID)) WHERE \"database_name\" ILIKE :CATALOG ESCAPE '!' "
+    "GROUP BY \"database_name\") SELECT { 'catalog_name': \"name\", 'catalog_db_schemas': ARRAY_AGG(NULLIF({ "
+    "'db_schema_name': db_schemas.\"schema_name\", 'db_schema_tables': db_schema_tables }, {})) } get_objects "
+    'FROM TABLE(RESULT_SCAN(:SHOW_DB_QUERY_ID)) WHERE "name" ILIKE :CATALOG ESCAPE \'!\' GROUP BY "name";'
+)
+GET_OBJECTS_SCHEMAS = (
+    'WITH db_schemas AS (SELECT "database_name" as "catalog_name", "name" as "schema_name" '
+    "FROM table(RESULT_SCAN(:SHOW_SCHEMA_QUERY_ID))) SELECT { 'catalog_name': \"database_name\", "
+    "'catalog_db_schemas': ARRAY_AGG(NULLIF({ 'db_schema_name': \"schema_name\", 'db_schema_tables': null }, {})) } "
+    'get_objects FROM db_info WHERE "database_name" ILIKE :CATALOG ESCAPE \'!\' GROUP BY "database_name";'
+)
+GET_OBJECTS_CATALOGS = (
+    "SELECT { 'catalog_name': \"name\", 'catalog_db_schemas': null } get_objects "
+    "FROM TABLE(RESULT_SCAN(:SHOW_DB_QUERY_ID)) WHERE \"name\" ILIKE :CATALOG ESCAPE '!'"
+)
+
+
+def _get_objects(session, sql, **kw):
+    binds = {
+        "CATALOG": "%",
+        "DB_SCHEMA": "%",
+        "TABLE": "%",
+        "COLUMN": "%",
+        "PK_QUERY_ID": "x",
+        "FK_QUERY_ID": "x",
+        "UNIQUE_QUERY_ID": "x",
+        "SHOW_DB_QUERY_ID": "x",
+        "SHOW_SCHEMA_QUERY_ID": "x",
+        "SHOW_TABLE_QUERY_ID": "x",
+        "SHOW_COLUMNS_QUERY_ID": "x",
+    }
+    binds.update(kw)
+    r = session.execute(sql, {k: {"type": "TEXT", "value": v} for k, v in binds.items()})
+    assert r.rowtype[0]["name"] == "get_objects" and r.rowtype[0]["type"] == "object"
+    return [json.loads(s) for s in decode_rowset(r.rowset_b64).column("get_objects").to_pylist()]
+
+
+def test_get_objects_depths(session):
+    _setup_catalog(session)
+    assert _get_objects(session, GET_OBJECTS_CATALOGS) == [
+        {"catalog_name": "FAKEDB", "catalog_db_schemas": None}
+    ]
+    assert _get_objects(session, GET_OBJECTS_CATALOGS, CATALOG="fake%") == [
+        {"catalog_name": "FAKEDB", "catalog_db_schemas": None}
+    ]
+    [cat] = _get_objects(session, GET_OBJECTS_SCHEMAS)
+    assert sorted(s["db_schema_name"] for s in cat["catalog_db_schemas"]) == [
+        "INFORMATION_SCHEMA",
+        "PUBLIC",
+    ]
+    assert all(s["db_schema_tables"] is None for s in cat["catalog_db_schemas"])
+    [cat] = _get_objects(session, GET_OBJECTS_TABLES, DB_SCHEMA="PUBLIC")
+    [sch] = cat["catalog_db_schemas"]
+    assert sorted((t["table_name"], t["table_type"]) for t in sch["db_schema_tables"]) == [
+        ("C", "BASE TABLE"),
+        ("P", "BASE TABLE"),
+        ("VW", "VIEW"),
+    ]
+    assert sch["db_schema_tables"][0]["table_columns"] is None
+    assert sch["db_schema_tables"][0]["table_constraints"] is None
+
+
+def test_get_objects_all_columns_and_constraints(session):
+    _setup_catalog(session)
+    [cat] = _get_objects(session, GET_OBJECTS_ALL, DB_SCHEMA="PUBLIC", TABLE="C")
+    [sch] = cat["catalog_db_schemas"]
+    [tab] = sch["db_schema_tables"]
+    cols = {c["column_name"]: c for c in tab["table_columns"]}
+    assert [c["ordinal_position"] for c in tab["table_columns"]] == [1, 2, 3, 4, 5]
+    assert cols["ID"]["xdbc_type_name"] == "NUMBER" and cols["ID"]["xdbc_column_size"] == 38
+    assert cols["ID"]["xdbc_decimal_digits"] == 0 and cols["ID"]["xdbc_is_nullable"] == "NO"
+    assert cols["ID"]["xdbc_nullable"] == 0 and cols["ID"]["remarks"] is None
+    assert cols["S"]["xdbc_type_name"] == "TEXT" and cols["S"]["xdbc_column_size"] == 50
+    assert cols["S"]["xdbc_is_nullable"] == "NO"
+    assert cols["V"]["xdbc_type_name"] == "VARIANT"
+    assert cols["TS"]["xdbc_type_name"] == "TIMESTAMP_TZ" and cols["PID"]["xdbc_nullable"] == 1
+    by_type = {c["constraint_type"]: c for c in tab["table_constraints"]}
+    assert by_type["PRIMARY KEY"]["constraint_column_names"] == ["ID"]
+    assert by_type["PRIMARY KEY"]["constraint_column_usage"] == []
+    assert by_type["FOREIGN KEY"]["constraint_column_names"] == ["PID"]
+    assert by_type["FOREIGN KEY"]["constraint_column_usage"] == [
+        {"fk_catalog": "FAKEDB", "fk_db_schema": "PUBLIC", "fk_table": "P", "fk_column_name": "ID"}
+    ]
+    assert all(c["constraint_name"] for c in tab["table_constraints"])
+    [cat] = _get_objects(session, GET_OBJECTS_ALL, DB_SCHEMA="PUBLIC", TABLE="P")
+    [tab] = cat["catalog_db_schemas"][0]["db_schema_tables"]
+    assert {
+        c["constraint_type"]: c["constraint_column_names"] for c in tab["table_constraints"]
+    } == {
+        "PRIMARY KEY": ["ID"],
+        "UNIQUE": ["CODE"],
+    }
+    [cat] = _get_objects(session, GET_OBJECTS_ALL, DB_SCHEMA="PUBLIC", TABLE="VW")
+    [tab] = cat["catalog_db_schemas"][0]["db_schema_tables"]
+    assert tab["table_type"] == "VIEW"
+    assert [c["column_name"] for c in tab["table_columns"]] == ["ID", "CODE"]
+    assert tab["table_constraints"] == []
+    assert _get_objects(session, GET_OBJECTS_ALL, DB_SCHEMA="PUBLIC", TABLE="nope") == [
+        {
+            "catalog_name": "FAKEDB",
+            "catalog_db_schemas": [{"db_schema_name": "PUBLIC", "db_schema_tables": []}],
+        }
+    ]
+    [cat] = _get_objects(session, GET_OBJECTS_ALL, DB_SCHEMA="PUBLIC", TABLE="c")
+    assert cat["catalog_db_schemas"][0]["db_schema_tables"][0]["table_name"] == "C"
+    assert _get_objects(session, GET_OBJECTS_ALL, CATALOG="OTHER") == []
+    [cat] = _get_objects(session, GET_OBJECTS_ALL, DB_SCHEMA="PUBLIC", TABLE="C", COLUMN="S")
+    assert [
+        c["column_name"]
+        for c in cat["catalog_db_schemas"][0]["db_schema_tables"][0]["table_columns"]
+    ] == ["S"]
+
+
+def test_desc_table_layout(session):
+    from tests.fake_snowflake.sqlengine import SnowflakeError
+
+    _setup_catalog(session)
+    r = session.execute('DESC TABLE "FAKEDB"."PUBLIC"."C"')
+    assert [c["name"] for c in r.rowtype] == [
+        "name",
+        "type",
+        "kind",
+        "null?",
+        "default",
+        "primary key",
+        "unique key",
+        "check",
+        "expression",
+        "comment",
+        "policy name",
+        "privacy domain",
+    ]
+    tbl = decode_rowset(r.rowset_b64)
+    rows = list(
+        zip(
+            tbl.column("name").to_pylist(),
+            tbl.column("type").to_pylist(),
+            tbl.column("null?").to_pylist(),
+            tbl.column("primary key").to_pylist(),
+            strict=True,
+        )
+    )
+    assert rows[0] == ("ID", "NUMBER(38,0)", "N", "Y")
+    assert rows[4] == ("S", "VARCHAR(50)", "N", "N")
+    assert rows[2][1] == "VARIANT" and tbl.column("kind").to_pylist()[0] == "COLUMN"
+    with pytest.raises(SnowflakeError) as e:
+        session.execute("DESC TABLE NOPE")
+    assert e.value.code == "002003"
