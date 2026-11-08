@@ -30,7 +30,8 @@ from contextlib import contextmanager
 from typing import Any, Literal
 
 import pyarrow as pa
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.orm import Session
 from sqlalchemy.sql import ClauseElement
 
 from sqlalchemy_adbc.base import ADBCDialect
@@ -114,12 +115,15 @@ def ingest_arrow(
 
 def _check_connection(connection: Any) -> ADBCDialect:
     if not isinstance(connection, Connection):
-        kind = type(connection).__name__
-        hint = {
-            "Engine": "pass engine.connect() (or use `with engine.begin() as conn`)",
-            "Session": "pass session.connection()",
-        }.get(kind, "pass a sqlalchemy.engine.Connection")
-        raise TypeError(f"expected a SQLAlchemy Connection, got {kind}; {hint}")
+        if isinstance(connection, Engine):
+            hint = "pass engine.connect() (or use `with engine.begin() as conn`)"
+        elif isinstance(connection, Session):
+            hint = "pass session.connection()"
+        else:
+            hint = "pass a sqlalchemy.engine.Connection"
+        raise TypeError(
+            f"expected a SQLAlchemy Connection, got {type(connection).__name__}; {hint}"
+        )
     dialect = connection.dialect
     if not isinstance(dialect, ADBCDialect):
         raise TypeError(
@@ -146,31 +150,35 @@ def _prepare(
     parameters: Mapping[str, Any] | Sequence[Any] | None,
 ) -> tuple[str, list[Any] | None]:
     """→ (SQL text for the driver, positional parameters)."""
+    paramstyle = connection.dialect.paramstyle
     if isinstance(statement, str):
         if parameters is None:
             return statement, None
-        if isinstance(parameters, Mapping):
+        if isinstance(parameters, Mapping | str | bytes):
             raise TypeError(
-                "a plain SQL string takes positional parameters (a list or tuple) for its "
-                "'?' placeholders; use sqlalchemy.text() for named parameters"
+                "a plain SQL string takes positional parameters (a list or tuple) for the "
+                f"driver's placeholders (paramstyle {paramstyle!r}); use sqlalchemy.text() "
+                "for named parameters"
             )
         return statement, list(parameters)
     if parameters is not None and not isinstance(parameters, Mapping):
         raise TypeError("a SQLAlchemy statement takes its parameters as a mapping of name to value")
-    compiled: Any = statement.compile(
-        dialect=connection.dialect, compile_kwargs={"render_postcompile": True}
-    )
-    bound: Mapping[str, Any] = compiled.construct_params(dict(parameters or {})) or {}
-    # SQLCompiler internals: the dialect's bind processors keyed by bind name,
-    # and the bind names in positional (qmark) order.
-    processors: Mapping[str, Any] = compiled._bind_processors
+    compiled: Any = statement.compile(dialect=connection.dialect)
+    # construct_expanded_state renders post-compile binds (IN lists, expanding
+    # and literal_execute parameters) for these values and reports the final
+    # positional order; escape_names=False keeps raw bind names, which is what
+    # the processors and positiontup are keyed by (as in SQLAlchemy's own
+    # execution context).
+    state = compiled.construct_expanded_state(dict(parameters or {}), escape_names=False)
+    processors: Mapping[str, Any] = {**compiled._bind_processors, **state.processors}
+    values: Mapping[str, Any] = state.parameters
     positional = [
-        processors[name](bound[name])
-        if name in processors and bound[name] is not None
-        else bound[name]
-        for name in compiled.positiontup or []
+        processors[name](values[name])
+        if name in processors and values[name] is not None
+        else values[name]
+        for name in state.positiontup or []
     ]
-    return str(compiled), positional
+    return str(state.statement), positional
 
 
 def _execute(
@@ -178,6 +186,7 @@ def _execute(
     statement: str | ClauseElement,
     parameters: Mapping[str, Any] | Sequence[Any] | None,
 ) -> Any:
+    _check_connection(connection)
     sql, positional = _prepare(connection, statement, parameters)
     cursor = _raw_cursor(connection)
     try:
