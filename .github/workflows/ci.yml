@@ -32,10 +32,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Matrix tracks active Python versions only — 3.10 hit EOL in
-        # October 2026, so it's dropped. Bump when a new minor ships;
-        # drop when Python marks one end-of-life.
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # Matrix matches requires-python (>=3.12). 3.11 was dropped in
+        # 0.7.0 ahead of its upstream EOL (Oct 2027) to keep one toolchain
+        # target; see CHANGELOG. Bump when a new minor ships.
+        python-version: ["3.12", "3.13", "3.14"]
     # Postgres service for integration tests (test_postgresql_types.py,
     # issue #3). Gated by DRLS_PG_URL — tests skip when the env var is
     # absent, so local `pytest` runs without a local PG also pass.
