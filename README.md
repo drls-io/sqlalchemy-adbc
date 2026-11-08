@@ -16,9 +16,8 @@ ADBC drivers speak Python DBAPI and return results as Arrow record batches,
 with no driver-specific JDBC/ODBC install. But most of the Python ecosystem
 wires into databases through SQLAlchemy, and ADBC doesn't ship a dialect.
 This package is a thin translation layer: SQLAlchemy URL → ADBC `db_kwargs`
-→ DBAPI connection. SQLAlchemy's own results are rows; the
-[Arrow-native path](#arrow-native-path) below skips that step when you want
-Arrow, Polars or pandas.
+→ DBAPI connection. SQLAlchemy's own results are rows; the "Arrow-native
+path" section below skips that step when you want Arrow, Polars or pandas.
 
 ## Install
 
