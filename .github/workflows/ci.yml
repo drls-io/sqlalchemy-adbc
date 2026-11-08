@@ -53,8 +53,23 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # Flight SQL server for tests/test_flightsql_e2e.py: GizmoSQL (DuckDB
+      # backend), plaintext gRPC on 31337. Pinned tag; bump deliberately. No
+      # Docker health command — the image guarantees no curl/wget — so the
+      # test fixture retries the first connection for up to 60 s instead.
+      gizmosql:
+        image: gizmodata/gizmosql:v1.42.2
+        env:
+          GIZMOSQL_USERNAME: ci
+          GIZMOSQL_PASSWORD: ci-password
+          TLS_ENABLED: "0"
+          PRINT_QUERIES: "0"
+          DATABASE_BACKEND: duckdb
+        ports:
+          - 31337:31337
     env:
       DRLS_PG_URL: "postgresql+adbc://test:test@localhost:5432/test"
+      DRLS_FLIGHTSQL_URL: "flightsql+adbc://ci:ci-password@localhost:31337?auth=basic&tls=false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -63,4 +78,5 @@ jobs:
       - name: Install
         run: pip install -e ".[dev,postgresql]"
       - name: Pytest
-        run: pytest tests/ --cov=sqlalchemy_adbc --cov-report=term-missing
+        # -rs lists skips so a gated suite that silently skipped is visible.
+        run: pytest tests/ -rs --cov=sqlalchemy_adbc --cov-report=term-missing
