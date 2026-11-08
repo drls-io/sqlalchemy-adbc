@@ -89,17 +89,27 @@ def wait_for_flightsql(engine: sa.Engine, timeout: float = 60.0) -> None:
 
 @pytest.fixture(scope="session")
 def flightsql_url() -> str:
+    """The live server's URL, returned only once the server answers.
+
+    The readiness wait lives here so every fixture built on the URL (the
+    engine, the bearer handshake, ad-hoc engines with a wrong password) is
+    gated, not just the first one that happens to run.
+    """
     url = os.environ.get("DRLS_FLIGHTSQL_URL")
     if not url:
         pytest.skip("Requires DRLS_FLIGHTSQL_URL")
     pytest.importorskip("adbc_driver_flightsql")
+    probe = sa.create_engine(url)
+    try:
+        wait_for_flightsql(probe)
+    finally:
+        probe.dispose()
     return url
 
 
 @pytest.fixture(scope="module")
 def flightsql_engine(flightsql_url: str) -> Iterator[sa.Engine]:
     engine = sa.create_engine(flightsql_url)
-    wait_for_flightsql(engine)
     yield engine
     engine.dispose()
 
@@ -109,10 +119,21 @@ def flightsql_bearer_url(flightsql_url: str) -> str:
     """The Flight handshake's bearer token, in our default ``bearer`` URL form."""
     flight = pytest.importorskip("pyarrow.flight")
     url = sa.make_url(flightsql_url)
-    tls = str(url.query.get("tls", "true")).lower() not in ("false", "0", "no")
+    tls = str(url.query.get("tls", "true")).lower() in ("1", "true", "yes", "on")
     scheme = "grpc+tls" if tls else "grpc"
     host, port = url.host or "localhost", url.port or (443 if tls else 50051)
     client = flight.FlightClient(f"{scheme}://{host}:{port}")
-    _, header_value = client.authenticate_basic_token(url.username or "", url.password or "")
+    try:
+        _, header_value = client.authenticate_basic_token(url.username or "", url.password or "")
+    finally:
+        client.close()
     token = header_value.decode().split(" ", 1)[-1]
-    return f"flightsql+adbc://x:{token}@{host}:{port}?tls={'true' if tls else 'false'}"
+    bearer = sa.URL.create(
+        "flightsql+adbc",
+        username="x",
+        password=token,
+        host=host,
+        port=port,
+        query={"tls": "true" if tls else "false"},
+    )
+    return bearer.render_as_string(hide_password=False)

@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-08
+
+Flight SQL, the backend this package is about, is now integration-tested in
+CI against a real server (GizmoSQL), so three of the five drivers run end to
+end on every change. Python 3.11 support is dropped: the floor is 3.12.
+
 ### Removed
 
 - **Python 3.11 support.** `requires-python` is now `>=3.12` and CI, tox,
@@ -31,9 +37,9 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   `adbc-driver-snowflake` floor is 1.11, the wire details the fake endpoint
   encodes.
 - The fake Snowflake endpoint answers an unexpected error during login with a
-  Snowflake error instead of dropping the connection, types ambiguous result
-  columns by `FROM` order, and reflects self-referential foreign keys and
-  unique indexes with quotes in their names.
+  Snowflake error instead of dropping the connection, types `SELECT *` over a
+  join positionally in `FROM` order, and reflects foreign keys declared
+  without a column list (self-referential, mutual, or to another table).
 
 ## [0.6.0] — 2026-11-08
 

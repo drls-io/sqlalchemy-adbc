@@ -1033,7 +1033,9 @@ def test_ambiguous_column_type_follows_from_order(session):
     assert [c["type"] for c in r.rowtype] == ["date", "fixed", "text", "fixed"]
 
 
-def test_unique_index_with_quote_in_name_reflects(session):
+def test_unique_constraint_name_with_quote_does_not_reach_the_index_pragma(session):
+    # SQLite names the index behind a UNIQUE constraint sqlite_autoindex_<T>_<n>,
+    # so a constraint name holding a quote never reaches PRAGMA index_info.
     session.execute(
         'CREATE TABLE T (ID INT PRIMARY KEY, CODE VARCHAR(5), CONSTRAINT "uq""x" UNIQUE (CODE))'
     )
@@ -1055,3 +1057,28 @@ def test_self_referential_fk_without_column_list_reflects(session):
     assert fk["constraint_column_names"] == ["PARENT"]
     assert fk["constraint_column_usage"][0]["fk_table"] == "NODE"
     assert fk["constraint_column_usage"][0]["fk_column_name"] == "ID"
+
+
+def test_fk_without_column_list_to_another_table_reflects(session):
+    # ``REFERENCES P`` means P's primary key. Resolving it must not walk the
+    # whole catalog again (review finding: RecursionError on HEAD and main).
+    session.execute("CREATE TABLE P (ID INT PRIMARY KEY)")
+    session.execute("CREATE TABLE C (ID INT PRIMARY KEY, PID INT REFERENCES P)")
+    session.execute("CREATE TABLE M1 (ID INT PRIMARY KEY, OTHER INT REFERENCES M2)")
+    session.execute("CREATE TABLE M2 (ID INT PRIMARY KEY, OTHER INT REFERENCES M1)")
+    [cat] = _get_objects(session, GET_OBJECTS_ALL, DB_SCHEMA="PUBLIC", TABLE="C")
+    [tab] = cat["catalog_db_schemas"][0]["db_schema_tables"]
+    [fk] = [c for c in tab["table_constraints"] if c["constraint_type"] == "FOREIGN KEY"]
+    assert fk["constraint_column_names"] == ["PID"]
+    assert fk["constraint_column_usage"] == [
+        {"fk_catalog": "FAKEDB", "fk_db_schema": "PUBLIC", "fk_table": "P", "fk_column_name": "ID"}
+    ]
+    [cat] = _get_objects(session, GET_OBJECTS_ALL, DB_SCHEMA="PUBLIC", TABLE="M1")
+    [tab] = cat["catalog_db_schemas"][0]["db_schema_tables"]
+    [fk] = [c for c in tab["table_constraints"] if c["constraint_type"] == "FOREIGN KEY"]
+    assert fk["constraint_column_usage"][0] == {
+        "fk_catalog": "FAKEDB",
+        "fk_db_schema": "PUBLIC",
+        "fk_table": "M2",
+        "fk_column_name": "ID",
+    }
