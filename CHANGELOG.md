@@ -24,6 +24,10 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   `TIMESTAMP` → `TIMESTAMP(timezone=True)` (a UTC instant; `DATETIME` stays the
   naive `DateTime`). Previously `STRING` and `BYTES` reflected as `NullType`.
   ARRAY, STRUCT and GEOGRAPHY still reflect as `NullType`.
+- **Alembic on BigQuery.** Alembic ships no impl for the `bigquery` dialect
+  name, so `MigrationContext.configure` raised `KeyError`; importing
+  `sqlalchemy_adbc.bigquery` now registers one (verified: autogenerate against
+  a live dataset with `compare_type=True` reports only the real diff).
 - **Live BigQuery tests** (`tests/test_bigquery_e2e.py`), run when
   `DRLS_BIGQUERY_URL` is set: `create_all`, Core insert/select/update/delete
   round trips for every scalar type, boolean filters, reserved-word columns,

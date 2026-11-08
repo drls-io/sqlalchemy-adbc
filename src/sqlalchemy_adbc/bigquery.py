@@ -207,6 +207,19 @@ bigquery_ischema_names: dict[str, Any] = {
 }
 
 
+try:
+    from alembic.ddl.impl import DefaultImpl as _AlembicDefaultImpl
+except ImportError:  # pragma: no cover - alembic is optional
+    _AlembicDefaultImpl = None  # type: ignore[assignment,misc]
+
+if _AlembicDefaultImpl is not None:
+
+    class BigQueryAlembicImpl(_AlembicDefaultImpl):
+        """Alembic looks impls up by dialect name; it ships none for ``bigquery``."""
+
+        __dialect__ = "bigquery"
+
+
 class ADBCBigQueryDialect(ADBCDialect):
     name = "bigquery"
     driver = "adbc"

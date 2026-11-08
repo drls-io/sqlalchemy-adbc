@@ -146,3 +146,10 @@ def test_default_schema_is_the_url_dataset():
     url = sa.make_url("bigquery+adbc:///proj?dataset=ds")
     assert dialect.create_connect_args(url)[1]["db_kwargs"]["adbc.bigquery.sql.dataset_id"] == "ds"
     assert ADBCBigQueryDialect._dataset_of(url) == "ds"
+
+
+def test_alembic_impl_resolves_for_bigquery():
+    pytest.importorskip("alembic")
+    from alembic.ddl.impl import DefaultImpl
+
+    assert DefaultImpl.get_by_dialect(dialect).__dialect__ == "bigquery"
