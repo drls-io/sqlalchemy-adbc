@@ -4,28 +4,35 @@
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://github.com/drls-io/sqlalchemy-adbc/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/drls-io/sqlalchemy-adbc/actions/workflows/ci.yml)
 
-Generic [SQLAlchemy](https://www.sqlalchemy.org/) dialect for any
-[Apache Arrow ADBC](https://arrow.apache.org/adbc/) driver — so any tool that
-speaks SQLAlchemy (pandas, marimo, Superset, dbt, Polars) can read and write
-against Flight SQL, PostgreSQL, SQLite, Snowflake, and BigQuery through the
-Arrow-native wire path.
+[SQLAlchemy](https://www.sqlalchemy.org/) access to
+[Apache Arrow Flight SQL](https://arrow.apache.org/docs/format/FlightSql.html)
+servers, with the authentication an enterprise deployment needs: OAuth2
+client credentials, Kerberos/Negotiate, bearer tokens, and config profiles
+that keep secrets out of URLs. Any tool that speaks SQLAlchemy (pandas,
+Polars, marimo, Superset, dbt) gets a Flight SQL connection from one URL,
+and an Arrow-native path when it wants Arrow rather than rows.
+
+The same package also drives PostgreSQL, SQLite, Snowflake and BigQuery
+through their [ADBC](https://arrow.apache.org/adbc/) drivers; see
+[Other backends](#other-backends).
 
 ## Why this exists
 
-ADBC drivers speak Python DBAPI and return results as Arrow record batches,
-with no driver-specific JDBC/ODBC install. But most of the Python ecosystem
-wires into databases through SQLAlchemy, and ADBC doesn't ship a dialect.
-This package is a thin translation layer: SQLAlchemy URL → ADBC `db_kwargs`
-→ DBAPI connection. SQLAlchemy's own results are rows; the "Arrow-native
-path" section below skips that step when you want Arrow, Polars or pandas.
+Flight SQL servers (and the other ADBC drivers) speak Python DBAPI and return
+Arrow record batches, with no JDBC/ODBC install. But the Python ecosystem
+wires into databases through SQLAlchemy, and ADBC ships no dialect. This
+package is that dialect: SQLAlchemy URL → ADBC `db_kwargs` → DBAPI
+connection, with the authentication flows (token endpoints, SPNEGO tickets,
+per-connection credentials) handled here so a BI tool or notebook only has to
+hold a URL.
 
 ## Install
 
 ```bash
-pip install sqlalchemy-adbc
+pip install "sqlalchemy-adbc[flightsql]"            # Flight SQL
+pip install "sqlalchemy-adbc[flightsql,kerberos]"   # + Kerberos/Negotiate
 
-# With a driver extra:
-pip install "sqlalchemy-adbc[flightsql]"
+# Other backends
 pip install "sqlalchemy-adbc[postgresql]"
 pip install "sqlalchemy-adbc[sqlite]"
 pip install "sqlalchemy-adbc[snowflake]"
@@ -37,132 +44,20 @@ pip install "sqlalchemy-adbc[bigquery]"
 ```python
 import sqlalchemy
 
-# Flight SQL
+# Flight SQL with a bearer token (the URL password is the token)
 engine = sqlalchemy.create_engine(
-    "flightsql+adbc://flight-sql.example.com:443?tls=true",
-    connect_args={"db_kwargs": {
-        "adbc.flight.sql.authorization_header": f"Bearer {token}",
-    }},
+    "flightsql+adbc://user:TOKEN@flight-sql.example.com:443?tls=true"
 )
 
-# SQLite
-engine = sqlalchemy.create_engine("sqlite+adbc:///path/to/db.sqlite")
-
-# PostgreSQL
+# Flight SQL with OAuth2 or Kerberos from a config profile (no secret in the URL)
 engine = sqlalchemy.create_engine(
-    "postgresql+adbc://user:pass@host:5432/mydb"
+    "flightsql+adbc://flight-sql.corp.example:443?auth_profile=analytics"
 )
 
-# Works with pandas, Polars, marimo SQL cells, etc.
+# Works with pandas, Polars, marimo SQL cells, Superset, ...
 import pandas as pd
 df = pd.read_sql("SELECT 1 AS n", engine)
 ```
-
-## Arrow-native path
-
-`Connection.execute()` returns rows, so the driver's Arrow batches are
-converted to Python tuples. `sqlalchemy_adbc.arrow` reaches the ADBC cursor
-behind the same SQLAlchemy connection instead, so you keep the URL, pool,
-authentication and transaction and get Arrow in and out:
-
-```python
-import polars as pl
-from sqlalchemy import bindparam, select, text
-from sqlalchemy_adbc import fetch_arrow_table, ingest_arrow, open_arrow_batch_reader
-
-with engine.begin() as conn:
-    table = fetch_arrow_table(conn, select(orders).where(orders.c.day >= bindparam("d")), {"d": day})
-    frame = pl.from_arrow(table)                 # or table.to_pandas()
-
-    with open_arrow_batch_reader(conn, text("SELECT * FROM events WHERE kind = :k"), {"k": "click"}) as reader:
-        for batch in reader:                     # streams, one Arrow batch at a time
-            ...
-
-    ingest_arrow(conn, "orders_copy", table, mode="create")   # append | create | replace | create_append
-```
-
-Statements are SQLAlchemy constructs (compiled with the dialect, bind
-processors and IN-list expansion included, parameters as a mapping) or
-plain SQL strings passed to the driver verbatim (parameters as a positional
-sequence, placeholders in the driver's own style: `?` for SQLite, Flight SQL
-and Snowflake, `$1` for PostgreSQL; `text()` gives you `:name` everywhere).
-The helpers begin the SQLAlchemy transaction when none is open, so
-`conn.commit()`, `conn.rollback()` and `with engine.begin()` govern Arrow
-work as well; `Session.connection()` is accepted. Driver errors propagate as
-the ADBC exceptions. For `append` the Arrow schema must match the table
-(PostgreSQL rejects int64 into an `INTEGER` column). Snowflake ingest goes
-through a stage upload the fake endpoint cannot serve, so it is not covered
-by the test suite.
-
-| Path | Time (500,000 rows × 5 cols, median of 3) | vs rows |
-|---|---:|---:|
-| SQLAlchemy rows: `conn.execute(select).all()` | 1.20 s | 1.0× |
-| Arrow: `fetch_arrow_table(conn, select)` | 0.16 s | 7.5× |
-| Polars: `pl.from_arrow(fetch_arrow_table(...))` | 0.17 s | 7.1× |
-| pandas via Arrow: `fetch_arrow_table(...).to_pandas()` | 0.16 s | 7.4× |
-| pandas via rows: `pd.read_sql(select, conn)` | 1.33 s | 0.9× |
-
-Measured with `benchmarks/arrow_vs_rows.py` on an arm64 Mac (Darwin 27),
-Python 3.12.12, SQLAlchemy 2.0.49, pyarrow 23.0.1, adbc-driver-sqlite 1.11.0,
-polars 2.1.0, pandas 3.1.1, SQLite in memory. Absolute numbers are machine
-specific; the ratio is the point.
-
-## URL forms
-
-URLs follow SQLAlchemy's `<backend>+<driver>://` convention, with `adbc`
-as the driver. The pre-0.4 `adbc+<backend>://` spelling still works but
-emits a `DeprecationWarning` and will be removed in 1.0.
-
-| Backend      | URL                                                        |
-|--------------|------------------------------------------------------------|
-| Flight SQL   | `flightsql+adbc://host:port?tls=true&authorization=...`    |
-| Flight SQL   | `flightsql+adbc://user:TOKEN@host:port?tls=true` (bearer)  |
-| PostgreSQL   | `postgresql+adbc://user:pass@host:port/database`           |
-| SQLite       | `sqlite+adbc:///path/to/db` or `sqlite+adbc:///:memory:`   |
-| Snowflake    | `snowflake+adbc://user:pass@account/db/schema?warehouse=W` |
-| BigQuery     | `bigquery+adbc:///my-project?dataset=my_dataset`           |
-
-### BigQuery query-string options
-
-The database segment is the GCP project. Credentials default to Application
-Default Credentials (`gcloud auth application-default login` or a service
-account on the VM).
-
-| Key                   | Meaning                                                               |
-|-----------------------|-----------------------------------------------------------------------|
-| `dataset`             | Default dataset for unqualified table names (required to run queries) |
-| `location`            | Job location, e.g. `US` or `europe-west2`                             |
-| `credentials_path`    | Service-account JSON file; switches auth to that file                 |
-| `adbc.bigquery.sql.*` | Any driver option, passed through as is; wins over the short keys     |
-
-### Flight SQL query-string options
-
-| Key                 | Meaning                                            |
-|---------------------|----------------------------------------------------|
-| `tls=true`          | Use `grpc+tls://` instead of `grpc://`             |
-| `authorization=...` | Sets the ADBC `AUTHORIZATION_HEADER` db_kwarg      |
-| `header.<name>=<v>` | Forwarded via ADBC's `RPC_CALL_HEADER_PREFIX`      |
-| (any other key)     | Passed through as a db_kwarg verbatim              |
-
-**Tested servers.** CI runs the Flight SQL suite against
-[GizmoSQL](https://github.com/gizmodata/gizmosql) v1.42 (DuckDB backend):
-basic and bearer auth, type round trips, parameters, transactions,
-reflection and `pandas.read_sql`. Server-dependent: GizmoSQL's `GetObjects`
-reports no constraints or nullability, so reflected primary keys are empty
-and every column reflects `nullable=True`; its SQLite backend is not usable
-through the Go driver.
-
-## Proxies
-
-The Flight SQL, Snowflake and BigQuery drivers are Go libraries that read
-`HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case) from the process
-environment. Set them in the shell or launcher that starts Python: the Go
-runtime snapshots the environment at process start, so a variable written
-later from Python, by this package or anything else, is not seen by the
-drivers. Earlier versions exported a `[proxy]` section of the config file
-into the environment; it could never reach the drivers and is ignored with
-a warning since 0.9.0. PostgreSQL (libpq) and SQLite have no HTTP proxy
-concept.
 
 ## Authentication
 
@@ -191,11 +86,11 @@ it must be owned by you and not group- or world-writable, and the working
 directory is deliberately never searched. Any value may be `env:NAME`.
 
 ```toml
-[auth.drls-flight]
+[auth.analytics]
 type = "oauth2"
-token_url = "https://keycloak.example/realms/drls/protocol/openid-connect/token"
+token_url = "https://keycloak.example/realms/analytics/protocol/openid-connect/token"
 client_id = "marimo"
-client_secret = "env:DRLS_FLIGHT_CLIENT_SECRET"
+client_secret = "env:FLIGHT_CLIENT_SECRET"
 scope = "openid"
 
 [auth.corp-kerberos]
@@ -205,7 +100,7 @@ spn = "HTTP@flight-sql.corp.example"
 
 ```python
 engine = sqlalchemy.create_engine(
-    "flightsql+adbc://flight-sql.corp.example:443?auth_profile=drls-flight"
+    "flightsql+adbc://flight-sql.corp.example:443?auth_profile=analytics"
 )
 ```
 
@@ -214,59 +109,197 @@ A URL that names a profile may only adjust `oauth2_scope` and
 the config owner's control, `env:` references resolve only from the file,
 and `oauth2_client_secret` is never accepted in a query string.
 
+### Proxies
+
+The Flight SQL, Snowflake and BigQuery drivers are Go libraries that read
+`HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case) from the process
+environment. Set them in the shell or launcher that starts Python: the Go
+runtime snapshots the environment at process start, so a variable written
+later from Python, by this package or anything else, is not seen by the
+drivers. Versions before 0.9.0 exported a `[proxy]` section of the config
+file into the environment; it could never reach the drivers and is ignored
+with a warning. PostgreSQL (libpq) and SQLite have no HTTP proxy concept.
+
+## Arrow-native path
+
+`Connection.execute()` returns rows, so the driver's Arrow batches are
+converted to Python tuples. `sqlalchemy_adbc.arrow` reaches the ADBC cursor
+behind the same SQLAlchemy connection instead, so you keep the URL, pool,
+authentication and transaction and get Arrow in and out:
+
+```python
+import polars as pl
+from sqlalchemy import bindparam, select, text
+from sqlalchemy_adbc import fetch_arrow_table, ingest_arrow, open_arrow_batch_reader
+
+with engine.begin() as conn:
+    table = fetch_arrow_table(conn, select(orders).where(orders.c.day >= bindparam("d")), {"d": day})
+    frame = pl.from_arrow(table)                 # or table.to_pandas()
+
+    with open_arrow_batch_reader(conn, text("SELECT * FROM events WHERE kind = :k"), {"k": "click"}) as reader:
+        for batch in reader:                     # streams, one Arrow batch at a time
+            ...
+
+    ingest_arrow(conn, "orders_copy", table, mode="create")   # append | create | replace | create_append
+```
+
+Statements are SQLAlchemy constructs (compiled with the dialect, bind
+processors and IN-list expansion included, parameters as a mapping) or
+plain SQL strings passed to the driver verbatim (parameters as a positional
+sequence, placeholders in the driver's own style: `?` for SQLite, Flight SQL,
+Snowflake and BigQuery, `$1` for PostgreSQL; `text()` gives you `:name`
+everywhere). The helpers begin the SQLAlchemy transaction when none is open,
+so `conn.commit()`, `conn.rollback()` and `with engine.begin()` govern Arrow
+work as well; `Session.connection()` is accepted. Driver errors propagate as
+the ADBC exceptions. For `append` the Arrow schema must match the table
+(PostgreSQL rejects int64 into an `INTEGER` column). Snowflake ingest goes
+through a stage upload the fake endpoint cannot serve, so it is not covered
+by the test suite.
+
+| Path | Time (500,000 rows × 5 cols, median of 3) | vs rows |
+|---|---:|---:|
+| SQLAlchemy rows: `conn.execute(select).all()` | 1.20 s | 1.0× |
+| Arrow: `fetch_arrow_table(conn, select)` | 0.16 s | 7.5× |
+| Polars: `pl.from_arrow(fetch_arrow_table(...))` | 0.17 s | 7.1× |
+| pandas via Arrow: `fetch_arrow_table(...).to_pandas()` | 0.16 s | 7.4× |
+| pandas via rows: `pd.read_sql(select, conn)` | 1.33 s | 0.9× |
+
+Measured with `benchmarks/arrow_vs_rows.py` on an arm64 Mac (Darwin 27),
+Python 3.12.12, SQLAlchemy 2.0.49, pyarrow 23.0.1, adbc-driver-sqlite 1.11.0,
+polars 2.1.0, pandas 3.1.1, SQLite in memory. Absolute numbers are machine
+specific; the ratio is the point. The "no per-row materialisation" benefit
+exists only on this path; plain `Connection.execute()` still builds rows.
+
+## URL forms
+
+URLs follow SQLAlchemy's `<backend>+<driver>://` convention, with `adbc`
+as the driver. The pre-0.4 `adbc+<backend>://` spelling still works but
+emits a `DeprecationWarning` and is removed in 1.0.0 (see
+[Stability](#stability)).
+
+| Backend      | URL                                                        |
+|--------------|------------------------------------------------------------|
+| Flight SQL   | `flightsql+adbc://user:TOKEN@host:port?tls=true` (bearer)  |
+| Flight SQL   | `flightsql+adbc://host:port?tls=true&auth_profile=<name>`  |
+| PostgreSQL   | `postgresql+adbc://user:pass@host:port/database`           |
+| SQLite       | `sqlite+adbc:///path/to/db` or `sqlite+adbc:///:memory:`   |
+| Snowflake    | `snowflake+adbc://user:pass@account/db/schema?warehouse=W` |
+| BigQuery     | `bigquery+adbc:///my-project?dataset=my_dataset`           |
+
+### Flight SQL query-string options
+
+| Key                     | Meaning                                                  |
+|-------------------------|----------------------------------------------------------|
+| `tls=true`              | Use `grpc+tls://` instead of `grpc://`                   |
+| `auth=<mode>`           | `bearer` (default), `basic`, `negotiate`, `oauth2`       |
+| `auth_profile=<name>`   | Take the auth settings from the config file              |
+| `oauth2_token_url=` …   | OAuth2 client-credentials settings (see Authentication)  |
+| `authorization=...`     | Sets the ADBC `AUTHORIZATION_HEADER` db_kwarg directly   |
+| `header.<name>=<v>`     | Forwarded via ADBC's `RPC_CALL_HEADER_PREFIX`            |
+| (any other key)         | Passed through as a db_kwarg verbatim                    |
+
+**Tested servers.** CI runs the Flight SQL suite against
+[GizmoSQL](https://github.com/gizmodata/gizmosql) v1.42 (DuckDB backend):
+basic and bearer auth, type round trips, parameters, transactions,
+reflection and `pandas.read_sql`. Server-dependent: GizmoSQL's `GetObjects`
+reports no constraints or nullability, so reflected primary keys are empty
+and every column reflects `nullable=True`; its SQLite backend is not usable
+through the Go driver. Servers that report `TABLE`/`VIEW` in upper case or
+only numeric XDBC column type codes (Redis's Arrow Flight SQL server) reflect
+correctly since 0.9.1.
+
+## Other backends
+
+The connection layer, Arrow helpers, config profiles and proxy notes above
+apply to every backend. What differs is SQL compilation and reflection.
+
+**PostgreSQL** (`postgresql+adbc://`, libpq driver, `adbc-driver-postgresql>=1.13.0`).
+Typed decorators for JSONB / JSON / UUID / INET / CIDR / MACADDR, every range
+and multirange type (`int4range` … `tstzmultirange`) and `hstore`, returning
+SQLAlchemy's own `Range` / `MultiRange` / `dict` with working `@>`, `&&`, `?`
+operators and reflection. Reflection uses `pg_catalog`. Limitation: raw SQL
+readers (`pd.read_sql("SELECT period FROM t", engine)`, SQL Lab) see range and
+hstore values as bytes because plain SQL carries no column type; typed
+columns via Core, ORM or reflection are decoded
+([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11)).
+
+**SQLite** (`sqlite+adbc://`). SQLAlchemy's own SQLite dialect over the ADBC
+connection: its compiler, DDL, types, PRAGMA reflection and `ATTACH` schemas,
+passing SQLAlchemy's dialect compliance suite with documented exclusions
+([docs/compliance.md](docs/compliance.md)). `:memory:` URLs share one
+connection. Limitation: `UPDATE`/`DELETE` rowcount is not reported by the
+driver.
+
+**Snowflake** (`snowflake+adbc://`). Basic, OAuth2 and Snowflake's own
+`authenticator=` modes; `BOOLEAN`, `NUMBER(p, s)`, `VARIANT` / `OBJECT` /
+`ARRAY`, binary and temporal round trips; record-batch binds; reflection of
+tables, views and constraints. Limitation: `ingest_arrow` needs a stage
+upload and is untested; the fake endpoint used in CI is a model of Snowflake
+(see [Fake Snowflake endpoint](#fake-snowflake-endpoint)).
+
+**BigQuery** (`bigquery+adbc:///<project>?dataset=<dataset>`). GoogleSQL
+compilation: backtick quoting, `STRING` / `INT64` / `FLOAT64` / `BOOL` /
+`NUMERIC` / `BYTES` / `DATETIME` / `TIMESTAMP` DDL, `NOT ENFORCED` primary and
+foreign keys, native booleans, multi-row inserts, typed reflection of every
+scalar type, an Alembic impl. Credentials default to Application Default
+Credentials. Limitations: ARRAY / STRUCT / GEOGRAPHY reflect as `NullType`;
+no partitioning or clustering DDL; `UPDATE`/`DELETE` rowcount is not
+reported.
+
+| Key                   | Meaning                                                               |
+|-----------------------|-----------------------------------------------------------------------|
+| `dataset`             | Default dataset for unqualified table names (required to run queries) |
+| `location`            | Job location, e.g. `US` or `europe-west2`                             |
+| `credentials_path`    | Service-account JSON file; switches auth to that file                 |
+| `adbc.bigquery.sql.*` | Any driver option, passed through as is; wins over the short keys     |
+
 ## Status
 
-**Beta.** Core dialect + reflection + Alembic autogenerate work on
-the ADBC drivers we exercise in CI (SQLite end-to-end, PostgreSQL
-via service container). Not 1.0 yet — we want a few months of
-real-world use and at least one release without breaking changes
-before committing to a stable API.
+**Beta, approaching 1.0.** Every claim in this README is backed by a CI job
+or listed as a limitation. Full history in [CHANGELOG.md](CHANGELOG.md);
+tags on [GitHub Releases](https://github.com/drls-io/sqlalchemy-adbc/releases),
+wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
 
-Full history in [CHANGELOG.md](CHANGELOG.md). Download tags on
-[GitHub Releases](https://github.com/drls-io/sqlalchemy-adbc/releases);
-published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
+### What CI runs
 
-### What works
+Python 3.12, 3.13 and 3.14; SQLAlchemy 2.0 and 2.1 through `tox`.
 
-- `SELECT` / `INSERT` / `CREATE TABLE` / `DROP TABLE` / `ALTER TABLE`
-  for every advertised driver
-- `MetaData.reflect(bind=engine)` — full Inspector contract backed
-  by ADBC `GetObjects`, including columns, PK, FK, unique
-  constraints, indexes (native PRAGMA / `pg_catalog` queries on
-  SQLite and PG)
-- Alembic `autogenerate` — end-to-end, reusing SQLAlchemy's native
-  backend DDL impls via standard dialect-name lookup
-- URL forms for Flight SQL, PostgreSQL, SQLite, Snowflake, BigQuery
-  with correct special-character escaping in passwords
-- BigQuery as GoogleSQL: backtick quoting, `STRING` / `INT64` / `FLOAT64` /
-  `BOOL` / `NUMERIC` / `BYTES` / `DATETIME` / `TIMESTAMP` DDL, `NOT ENFORCED`
-  primary and foreign keys, native booleans, multi-row inserts, and typed
-  reflection of every scalar type (`TIMESTAMP` as `TIMESTAMP(timezone=True)`)
-- PostgreSQL typed decorators: JSONB / JSON / UUID / INET / CIDR /
-  MACADDR, and all range and multirange types (`int4range` …
-  `tstzmultirange`) plus `hstore`, returning SQLAlchemy's own
-  `Range` / `MultiRange` / `dict` with working `@>`, `&&`, `?`
-  operators and reflection
+| Backend    | In CI on every change | Live, when the variable is set |
+|------------|-----------------------|--------------------------------|
+| Flight SQL | GizmoSQL service container: auth modes, types, parameters, transactions, reflection, Arrow helpers | any server via `DRLS_FLIGHTSQL_URL` |
+| PostgreSQL | service container: typed round trips, ranges/hstore, reflection, Arrow helpers | `DRLS_PG_URL` |
+| SQLite     | full unit suite, Alembic autogenerate, SQLAlchemy's dialect compliance suite | – |
+| Snowflake  | real driver against the in-process fake endpoint: auth, CRUD, types, reflection, bindings | `DRLS_SNOWFLAKE_URL` |
+| BigQuery   | compile-only tests (DDL, quoting, reflection map) | `DRLS_BIGQUERY_URL` ([#12](https://github.com/drls-io/sqlalchemy-adbc/issues/12)) |
 
-### Known limitations
+Reflection (`MetaData.reflect`, the Inspector) runs on ADBC `GetObjects`
+for Flight SQL, Snowflake and BigQuery, and on the native catalog for SQLite
+and PostgreSQL. Alembic autogenerate works where an Alembic impl exists:
+SQLite and PostgreSQL (Alembic's own) and BigQuery (shipped here); Flight SQL
+and Snowflake have none.
 
-- **Raw SQL readers see PostgreSQL range / hstore values as bytes** —
-  `pd.read_sql("SELECT period FROM t", engine)` and SQL Lab style
-  queries carry no column type information, so the ADBC binary form
-  reaches Python untouched. Typed columns via Core, ORM or reflection
-  are decoded
-  ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
-- **Drivers exercised in CI** — SQLite fully, PostgreSQL and Flight SQL
-  (GizmoSQL) via service containers, Snowflake through the real driver
-  against the fake endpoint under `tests/fake_snowflake/`. BigQuery has
-  compile-only tests in CI; the live tests in `tests/test_bigquery_e2e.py`
-  run when `DRLS_BIGQUERY_URL` is set and need Google Cloud credentials
-  ([#12](https://github.com/drls-io/sqlalchemy-adbc/issues/12))
+### Stability
 
-Tests run on Python 3.12–3.14 in CI, including PostgreSQL and Flight SQL
-integration tests against service containers; see the badge above for the
-current state. `sqlite+adbc` passes SQLAlchemy's dialect compliance suite
-with documented exclusions; see [docs/compliance.md](docs/compliance.md).
+Stable from 0.9 on, changing only with a major version:
+
+- the `<backend>+adbc://` URL schemes and the query keys documented above;
+- the `auth=` modes and `auth_profile=`;
+- the config file location, permission rules and `[auth.<name>]` keys;
+- the `sqlalchemy_adbc.arrow` helper signatures.
+
+May still change before 1.0: reflection details on the generic `GetObjects`
+path (Flight SQL, Snowflake), type mappings for BigQuery ARRAY / STRUCT /
+GEOGRAPHY and Snowflake semi-structured values, `ischema_names` contents, and
+anything marked server-dependent above.
+
+Deprecated: the pre-0.4 `adbc+<backend>://` URL spellings warn today and are
+removed in **1.0.0**.
+
+1.0 ships when all of these hold: Flight SQL, PostgreSQL and SQLite are
+integration-tested in CI and the compliance suite is green on SQLite (done);
+Python 3.12–3.14 × SQLAlchemy 2.0/2.1 are tested (done); one minor release
+after 0.9 lands with no breaking change to the stable surface; the deprecated
+spellings are removed in the 1.0.0 release itself.
 
 ## Development
 

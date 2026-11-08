@@ -214,7 +214,7 @@ class ADBCConnectionMixin(DefaultDialect):
             warnings.warn(
                 f"URL scheme 'adbc+{backend}://' is deprecated; use "
                 f"'{backend}+adbc://' (SQLAlchemy's backend+driver order). "
-                "The old spelling will be removed in 1.0.",
+                "The old spelling will be removed in 1.0.0.",
                 DeprecationWarning,
                 stacklevel=2,
             )

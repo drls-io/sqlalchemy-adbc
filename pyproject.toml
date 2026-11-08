@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "sqlalchemy-adbc"
 version = "0.9.1"
-description = "Generic SQLAlchemy dialect for any ADBC driver (Flight SQL, PostgreSQL, SQLite, Snowflake, BigQuery)."
+description = "SQLAlchemy dialect for Apache Arrow Flight SQL with OAuth2, Kerberos and config profiles; also PostgreSQL, SQLite, Snowflake and BigQuery over ADBC."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
 authors = [{ name = "DRLS Contributors" }]
-keywords = ["sqlalchemy", "adbc", "arrow", "flight-sql", "dialect"]
+keywords = ["sqlalchemy", "flight-sql", "arrow", "adbc", "oauth2", "kerberos", "dialect"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -79,7 +79,7 @@ Issues = "https://github.com/drls-io/sqlalchemy-adbc/issues"
 "postgresql.adbc" = "sqlalchemy_adbc.postgresql:ADBCPostgreSQLDialect"
 "snowflake.adbc" = "sqlalchemy_adbc.snowflake:ADBCSnowflakeDialect"
 "bigquery.adbc" = "sqlalchemy_adbc.bigquery:ADBCBigQueryDialect"
-# Deprecated adbc+<backend> spellings; removed in 1.0.
+# Deprecated adbc+<backend> spellings; removed in 1.0.0.
 "adbc" = "sqlalchemy_adbc.base:ADBCDialect"
 "adbc.flightsql" = "sqlalchemy_adbc.flightsql:ADBCFlightSQLDialect"
 "adbc.sqlite" = "sqlalchemy_adbc.sqlite:ADBCSQLiteDialect"

@@ -6,6 +6,23 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **README leads with Flight SQL and authentication.** The package is
+  positioned as SQLAlchemy access to Flight SQL servers with OAuth2,
+  Kerberos/Negotiate, bearer and config profiles; PostgreSQL, SQLite,
+  Snowflake and BigQuery move to an "Other backends" section with their
+  limitations. A "Status" section lists what CI runs per backend, and a new
+  "Stability" section states the stable surface (URL schemes and query keys,
+  `auth=` modes, config file format, Arrow helper signatures), what may still
+  change before 1.0, and the 1.0 criteria. `pyproject.toml` description and
+  keywords follow.
+
+### Deprecated
+
+- **`adbc+<backend>://` URL spellings are removed in 1.0.0.** The warning now
+  names the version. Use `<backend>+adbc://`.
+
 ## [0.9.1] — 2026-11-08
 
 Thanks to Albert T. Wong ([@alberttwong](https://github.com/alberttwong)) for
