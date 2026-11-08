@@ -185,3 +185,50 @@ def test_polars_dataframe_ingest(engine: sa.Engine) -> None:
         ]
         table = fetch_arrow_table(c, sa.select(TABLE).where(TABLE.c.id >= 100))
     assert pl.from_arrow(table).shape == (2, 3)
+
+
+# ── review findings ──────────────────────────────────────────────────
+
+
+def test_in_list_with_bindparam(engine: sa.Engine) -> None:
+    # IN lists are post-compile binds; combined with a caller parameter they
+    # must still execute (review: construct_params refused after
+    # render_postcompile).
+    with engine.connect() as c:
+        stmt = (
+            sa.select(TABLE.c.id)
+            .where(TABLE.c.id.in_([1, 2, 3, 7]))
+            .where(TABLE.c.id < sa.bindparam("p"))
+            .order_by(TABLE.c.id)
+        )
+        assert fetch_arrow_table(c, stmt, {"p": 3}).column("id").to_pylist() == [1, 2]
+        stmt2 = sa.select(TABLE.c.id).where(TABLE.c.id.in_(sa.bindparam("ids", expanding=True)))
+        assert fetch_arrow_table(c, stmt2.order_by(TABLE.c.id), {"ids": [5, 6]}).column(
+            "id"
+        ).to_pylist() == [5, 6]
+        stmt3 = sa.select(TABLE.c.id).where(
+            TABLE.c.id == sa.bindparam("p", 4, literal_execute=True)
+        )
+        assert fetch_arrow_table(c, stmt3).column("id").to_pylist() == [4]
+        assert fetch_arrow_table(c, stmt3, {"p": 9}).column("id").to_pylist() == [9]
+
+
+def test_bind_names_that_need_escaping(engine: sa.Engine) -> None:
+    u = sa.Table("u", sa.MetaData(), sa.Column("a b", sa.Integer), sa.Column("c.d", sa.String(5)))
+    u.metadata.create_all(engine)
+    with engine.begin() as c:
+        c.execute(u.insert(), [{"a b": 1, "c.d": "x"}, {"a b": 2, "c.d": "y"}])
+        stmt = sa.select(u.c["c.d"]).where(u.c["a b"] == sa.bindparam("a b"))
+        assert fetch_arrow_table(c, stmt, {"a b": 2}).column("c.d").to_pylist() == ["y"]
+
+
+def test_type_errors_also_for_core_statements_and_string_parameters(engine: sa.Engine) -> None:
+    with Session(engine) as session, pytest.raises(TypeError, match="session.connection\\(\\)"):
+        fetch_arrow_table(session, sa.select(TABLE))  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="engine.connect\\(\\)"):
+        fetch_arrow_table(engine.execution_options(), sa.select(TABLE))  # type: ignore[arg-type]
+    with engine.connect() as c:
+        with pytest.raises(TypeError, match="positional"):
+            fetch_arrow_table(c, "SELECT id FROM t WHERE id < ?", "3")
+        with pytest.raises(TypeError, match="paramstyle|qmark"):
+            fetch_arrow_table(c, "SELECT id FROM t WHERE id < ?", {"p": 3})

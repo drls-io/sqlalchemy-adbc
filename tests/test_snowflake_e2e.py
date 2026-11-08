@@ -309,3 +309,17 @@ def test_fetch_arrow_table_binds_through_the_dialect(snowflake_engine, table):
     assert arrow.schema.field("D").type == pa.date32()
     assert arrow.column("D").to_pylist() == [dt.date(2024, 1, 2)]
     assert arrow.column("N").to_pylist() == [Decimal("12.34")]
+
+
+def test_fetch_arrow_table_runs_bind_processors_on_expanded_in_lists(snowflake_engine, table):
+    """Expanded IN values are new bind names; the Date → string processor must
+    still apply to each of them (review finding)."""
+    from sqlalchemy_adbc.arrow import fetch_arrow_table
+
+    t = sa.Table(table, sa.MetaData(), autoload_with=snowflake_engine)
+    with snowflake_engine.connect() as c:
+        arrow = fetch_arrow_table(
+            c,
+            sa.select(t.c.ID).where(t.c.D.in_([dt.date(2024, 1, 2), dt.date(2030, 1, 1)])),
+        )
+    assert arrow.column("ID").to_pylist() == [1]
