@@ -289,3 +289,23 @@ def test_bad_sql_raises_dbapi_error(snowflake_engine):
     # The connection is still usable afterwards.
     with snowflake_engine.connect() as c:
         assert c.execute(sa.text("SELECT 1")).scalar() == 1
+
+
+def test_fetch_arrow_table_binds_through_the_dialect(snowflake_engine, table):
+    """Date binds take the dialect's string rendering on the Arrow path too."""
+    import pyarrow as pa
+
+    from sqlalchemy_adbc.arrow import fetch_arrow_table
+
+    t = sa.Table(table, sa.MetaData(), autoload_with=snowflake_engine)
+    with snowflake_engine.connect() as c:
+        arrow = fetch_arrow_table(
+            c,
+            sa.select(t.c.ID, t.c.N, t.c.D).where(t.c.D >= sa.bindparam("p")),
+            {"p": dt.date(2024, 1, 1)},
+        )
+    assert arrow.num_rows == 1
+    assert pa.types.is_decimal(arrow.schema.field("N").type)
+    assert arrow.schema.field("D").type == pa.date32()
+    assert arrow.column("D").to_pylist() == [dt.date(2024, 1, 2)]
+    assert arrow.column("N").to_pylist() == [Decimal("12.34")]

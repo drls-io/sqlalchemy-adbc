@@ -216,3 +216,39 @@ def test_pandas_read_sql(flightsql_engine: sa.Engine) -> None:
         assert [float(v) for v in frame["amt"]] == [12.34, 12.34]
     finally:
         t.metadata.drop_all(flightsql_engine)
+
+
+# ── Arrow helpers ────────────────────────────────────────────────────
+
+
+def test_arrow_fetch_stream_and_ingest(flightsql_engine: sa.Engine) -> None:
+    import pyarrow as pa
+
+    from sqlalchemy_adbc.arrow import fetch_arrow_table, ingest_arrow, open_arrow_batch_reader
+
+    name = _name()
+    data = pa.table(
+        {
+            "id": pa.array(range(5000), pa.int64()),
+            "name": pa.array([f"n{i}" for i in range(5000)], pa.string()),
+        }
+    )
+    try:
+        with flightsql_engine.begin() as c:
+            assert ingest_arrow(c, name, data, mode="create") == 5000
+            assert ingest_arrow(c, name, data.slice(0, 2), mode="append") == 2
+            table = fetch_arrow_table(c, f'SELECT count(*) AS n FROM "{name}"')
+            assert table.column("n").to_pylist() == [5002]
+            with open_arrow_batch_reader(c, f'SELECT id, name FROM "{name}" ORDER BY id') as reader:
+                batches = list(reader)
+            assert len(batches) >= 2 and sum(b.num_rows for b in batches) == 5002
+        with flightsql_engine.connect() as c:
+            tx = c.begin()
+            ingest_arrow(c, name, data.slice(0, 1))
+            tx.rollback()
+            assert fetch_arrow_table(c, f'SELECT count(*) AS n FROM "{name}"').column(
+                "n"
+            ).to_pylist() == [5002]
+    finally:
+        with flightsql_engine.begin() as c:
+            c.exec_driver_sql(f'DROP TABLE IF EXISTS "{name}"')
