@@ -34,7 +34,7 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import ClauseElement
 
-from sqlalchemy_adbc.base import ADBCDialect
+from sqlalchemy_adbc.base import ADBCConnectionMixin
 
 __all__ = ["fetch_arrow_table", "ingest_arrow", "open_arrow_batch_reader"]
 
@@ -113,7 +113,7 @@ def ingest_arrow(
 # ── internals ────────────────────────────────────────────────────────
 
 
-def _check_connection(connection: Any) -> ADBCDialect:
+def _check_connection(connection: Any) -> ADBCConnectionMixin:
     if not isinstance(connection, Connection):
         if isinstance(connection, Engine):
             hint = "pass engine.connect() (or use `with engine.begin() as conn`)"
@@ -125,7 +125,7 @@ def _check_connection(connection: Any) -> ADBCDialect:
             f"expected a SQLAlchemy Connection, got {type(connection).__name__}; {hint}"
         )
     dialect = connection.dialect
-    if not isinstance(dialect, ADBCDialect):
+    if not isinstance(dialect, ADBCConnectionMixin):
         raise TypeError(
             f"connection uses dialect {dialect.name!r} ({type(dialect).__name__}), "
             "not an ADBC dialect; Arrow helpers need an ADBC-backed engine such as "
