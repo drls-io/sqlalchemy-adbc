@@ -250,14 +250,11 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   against the fake endpoint under `tests/fake_snowflake/`. BigQuery has URL
   translation tests only
   ([#12](https://github.com/drls-io/sqlalchemy-adbc/issues/12))
-- **ADBC SQLite NOT NULL reporting** — fixed upstream in
-  `adbc_driver_sqlite` 1.13 (Python ≥ 3.11). On older drivers every
-  column reflects as nullable=True
-  ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13))
 
 Tests run on Python 3.12–3.14 in CI, including PostgreSQL and Flight SQL
 integration tests against service containers; see the badge above for the
-current state.
+current state. `sqlite+adbc` passes SQLAlchemy's dialect compliance suite
+with documented exclusions; see [docs/compliance.md](docs/compliance.md).
 
 ## Development
 
