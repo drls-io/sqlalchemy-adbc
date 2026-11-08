@@ -34,7 +34,8 @@ dependencies = [
 
 [project.optional-dependencies]
 flightsql = ["adbc-driver-flightsql>=1.0"]
-postgresql = ["adbc-driver-postgresql>=1.0"]
+# 1.0.0 cannot run prepared statements that return result sets (#18).
+postgresql = ["adbc-driver-postgresql>=1.13.0"]
 sqlite = ["adbc-driver-sqlite>=1.0"]
 snowflake = ["adbc-driver-snowflake>=1.0"]
 bigquery = ["adbc-driver-bigquery>=1.0"]
