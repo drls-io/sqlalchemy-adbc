@@ -238,6 +238,10 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   backend DDL impls via standard dialect-name lookup
 - URL forms for Flight SQL, PostgreSQL, SQLite, Snowflake, BigQuery
   with correct special-character escaping in passwords
+- BigQuery as GoogleSQL: backtick quoting, `STRING` / `INT64` / `FLOAT64` /
+  `BOOL` / `NUMERIC` / `BYTES` / `DATETIME` / `TIMESTAMP` DDL, `NOT ENFORCED`
+  primary and foreign keys, native booleans, multi-row inserts, and typed
+  reflection of every scalar type (`TIMESTAMP` as `TIMESTAMP(timezone=True)`)
 - PostgreSQL typed decorators: JSONB / JSON / UUID / INET / CIDR /
   MACADDR, and all range and multirange types (`int4range` …
   `tstzmultirange`) plus `hstore`, returning SQLAlchemy's own
@@ -254,8 +258,9 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
 - **Drivers exercised in CI** — SQLite fully, PostgreSQL and Flight SQL
   (GizmoSQL) via service containers, Snowflake through the real driver
-  against the fake endpoint under `tests/fake_snowflake/`. BigQuery has URL
-  translation tests only
+  against the fake endpoint under `tests/fake_snowflake/`. BigQuery has
+  compile-only tests in CI; the live tests in `tests/test_bigquery_e2e.py`
+  run when `DRLS_BIGQUERY_URL` is set and need Google Cloud credentials
   ([#12](https://github.com/drls-io/sqlalchemy-adbc/issues/12))
 
 Tests run on Python 3.12–3.14 in CI, including PostgreSQL and Flight SQL
@@ -270,7 +275,7 @@ git clone https://github.com/drls-io/sqlalchemy-adbc
 cd sqlalchemy-adbc
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                 # unit tests + the fake Snowflake endpoint; live backends via DRLS_PG_URL / DRLS_FLIGHTSQL_URL / DRLS_SNOWFLAKE_URL
+pytest                 # unit tests + the fake Snowflake endpoint; live backends via DRLS_PG_URL / DRLS_FLIGHTSQL_URL / DRLS_SNOWFLAKE_URL / DRLS_BIGQUERY_URL
 ruff check src/ tests/ && ruff format --check src/ tests/
 mypy src tests
 tox                    # same gates across Python 3.12–3.14 × SQLAlchemy 2.0/2.1 (tox.ini)

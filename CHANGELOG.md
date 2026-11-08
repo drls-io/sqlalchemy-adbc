@@ -6,6 +6,36 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **BigQuery dialect speaks GoogleSQL.** Identifiers quote with backticks
+  (`"..."` is a string literal in BigQuery, so any reserved-word or mixed-case
+  name used to be a syntax error), with backslash escaping of backticks inside
+  names and of quotes inside rendered string literals; DDL emits `STRING(n)`, `INT64`, `FLOAT64`,
+  `BOOL`, `NUMERIC(p, s)`, `BYTES`, `DATETIME`, `TIMESTAMP`, `JSON` instead of
+  `VARCHAR` / `BLOB` / `FLOAT`, which BigQuery rejects; primary and foreign keys
+  render `NOT ENFORCED` (the only kind BigQuery has) and unique constraints are
+  omitted. Native booleans (`WHERE flag`, not `flag = 1`), exact `NUMERIC`
+  decimals, multi-row `VALUES` inserts via insertmanyvalues, and `LargeBinary`
+  binds (the driver module lacks `Binary`). `DateTime` binds render
+  `CAST(? AS DATETIME)`: the driver sends a naive datetime as a `TIMESTAMP`
+  parameter, which BigQuery refuses to store in a `DATETIME` column.
+- **BigQuery reflection types.** `STRING(n)`, `BYTES`, `BIGNUMERIC`,
+  `NUMERIC(p, s)` with precision and scale, `INTEGER` → `BigInteger`, and
+  `TIMESTAMP` → `TIMESTAMP(timezone=True)` (a UTC instant; `DATETIME` stays the
+  naive `DateTime`). Previously `STRING` and `BYTES` reflected as `NullType`.
+  ARRAY, STRUCT and GEOGRAPHY still reflect as `NullType`.
+- **Alembic on BigQuery.** Alembic ships no impl for the `bigquery` dialect
+  name, so `MigrationContext.configure` raised `KeyError`; importing
+  `sqlalchemy_adbc.bigquery` now registers one (verified: autogenerate against
+  a live dataset with `compare_type=True` reports only the real diff).
+- **Live BigQuery tests** (`tests/test_bigquery_e2e.py`), run when
+  `DRLS_BIGQUERY_URL` is set: `create_all`, Core insert/select/update/delete
+  round trips for every scalar type, boolean filters, reserved-word columns,
+  `IN` lists, LIMIT/OFFSET and reflection. `executemany` runs one statement per
+  parameter set because the driver's own `executemany` returns before every
+  job has finished.
+
 ### Fixed
 
 - **BigQuery URL options.** `?dataset=`, `?location=` and `?credentials_path=`

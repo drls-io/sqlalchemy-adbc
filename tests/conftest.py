@@ -114,6 +114,18 @@ def flightsql_engine(flightsql_url: str) -> Iterator[sa.Engine]:
     engine.dispose()
 
 
+@pytest.fixture(scope="module")
+def bigquery_engine() -> Iterator[sa.Engine]:
+    """A live BigQuery engine, or skip. Needs ``DRLS_BIGQUERY_URL`` and credentials."""
+    url = os.environ.get("DRLS_BIGQUERY_URL")
+    if not url:
+        pytest.skip("Requires DRLS_BIGQUERY_URL")
+    pytest.importorskip("adbc_driver_bigquery")
+    engine = sa.create_engine(url)
+    yield engine
+    engine.dispose()
+
+
 @pytest.fixture(scope="session")
 def flightsql_bearer_url(flightsql_url: str) -> str:
     """The Flight handshake's bearer token, in our default ``bearer`` URL form."""
