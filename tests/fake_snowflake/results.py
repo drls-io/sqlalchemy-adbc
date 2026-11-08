@@ -203,7 +203,7 @@ def _parse_timestamp(value: Any) -> tuple[int, int, int | None]:
             hh, mm = int(tz[1:3]), int(tz[-2:])
             offset = sign * dt.timedelta(hours=hh, minutes=mm)
     if offset is None:
-        epoch = int(d.replace(tzinfo=dt.timezone.utc).timestamp())
+        epoch = int(d.replace(tzinfo=dt.UTC).timestamp())
         return epoch, nanos, None
     epoch = int(d.replace(tzinfo=dt.timezone(offset)).timestamp())
     return epoch, nanos, int(offset.total_seconds() // 60)

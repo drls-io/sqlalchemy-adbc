@@ -107,7 +107,7 @@ def test_number_binds_whole_values_without_float_conversion(snowflake_engine, ta
 def test_bind_every_python_type_in_one_row(snowflake_engine, table):
     """The exact cases that failed on the raw driver (finding B)."""
     t = sa.Table(table, sa.MetaData(), autoload_with=snowflake_engine)
-    aware = dt.datetime(2024, 1, 2, 3, 4, 5, 123456, tzinfo=dt.timezone.utc)
+    aware = dt.datetime(2024, 1, 2, 3, 4, 5, 123456, tzinfo=dt.UTC)
     with snowflake_engine.begin() as c:
         c.execute(
             t.insert().values(

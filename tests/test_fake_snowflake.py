@@ -181,16 +181,14 @@ def test_encode_rowset_types_and_metadata():
     assert tbl.schema.field("T").type == pa.int64()
     assert tbl.column("T").to_pylist()[1] == (3 * 3600 + 4 * 60 + 5) * 10**9 + 123456000
     ts = tbl.column("TS").to_pylist()
-    epoch = int(dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.timezone.utc).timestamp())
+    epoch = int(dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.UTC).timestamp())
     assert ts[0] == {"epoch": epoch, "fraction": 0}
     assert ts[1]["fraction"] == 500_000_000 and ts[2] is None
     tz = tbl.column("TZ").to_pylist()
     assert tz[0]["timezone"] == 1440 + 120
     assert tz[1]["timezone"] == 1440
     assert tz[3]["timezone"] == 1440 - 330
-    assert tz[0]["epoch"] == int(
-        dt.datetime(2024, 1, 2, 1, 4, 5, tzinfo=dt.timezone.utc).timestamp()
-    )
+    assert tz[0]["epoch"] == int(dt.datetime(2024, 1, 2, 1, 4, 5, tzinfo=dt.UTC).timestamp())
     assert tbl.column("BI").to_pylist() == [b"\x01\x02", b"\x03", None, b""]
     assert tbl.schema.field("V").type == pa.string()
     md = tbl.schema.field("N").metadata
