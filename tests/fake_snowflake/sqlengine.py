@@ -1021,13 +1021,10 @@ class Catalog:
         for cols, ref_table, ref_cols in fks.values():
             if any(c is None for c in ref_cols):
                 # ``REFERENCES other`` without a column list means the other
-                # table's primary key; a self-reference must not recurse into
-                # building this table again.
-                if ref_table.upper() == name.upper():
-                    ref_cols = list(primary_key)
-                else:
-                    ref = self.table(ref_table)
-                    ref_cols = list(ref.primary_key) if ref else []
+                # table's primary key. Read it straight from the pragma: going
+                # through tables() would rebuild this table (self reference)
+                # or the other one (mutual references) without end.
+                ref_cols = self._primary_key_of(ref_table)
             foreign_keys.append((cols, ref_table, [c for c in ref_cols if c is not None]))
         return TableInfo(
             name=name,
@@ -1037,6 +1034,11 @@ class Catalog:
             uniques=uniques,
             foreign_keys=foreign_keys,
         )
+
+    def _primary_key_of(self, table: str) -> list[str | None]:
+        quoted = '"' + table.replace('"', '""') + '"'
+        rows = self.session.conn.execute(f"PRAGMA table_info({quoted})").fetchall()
+        return [str(r[1]) for r in sorted((r for r in rows if r[5]), key=lambda r: r[5])]
 
     # ── SHOW ─────────────────────────────────────────────────────────
 
