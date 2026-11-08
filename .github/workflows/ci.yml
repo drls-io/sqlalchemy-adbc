@@ -12,10 +12,10 @@ concurrency:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install
@@ -29,10 +29,10 @@ jobs:
 
   # SQLAlchemy's dialect compliance suite on sqlite+adbc (docs/compliance.md).
   compliance:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install
@@ -41,7 +41,7 @@ jobs:
         run: pytest suite/ --dburi "sqlite+adbc:///suite_sqlite_adbc.db" -p no:cacheprovider -q
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -84,8 +84,8 @@ jobs:
       DRLS_PG_URL: "postgresql+adbc://test:test@localhost:5432/test"
       DRLS_FLIGHTSQL_URL: "flightsql+adbc://ci:ci-password@localhost:31337?auth=basic&tls=false"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
