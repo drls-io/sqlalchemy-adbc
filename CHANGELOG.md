@@ -13,8 +13,43 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   `>=3.11`, the `tomli` dependency is gone (`tomllib` is in the standard
   library), and CI and tox run 3.11–3.14. Python 3.14 is new in the matrix.
 
+### Added
+
+- **Fake Snowflake endpoint in CI** — `tests/fake_snowflake/` speaks
+  Snowflake's wire protocol to the real `adbc-driver-snowflake`, backed by
+  SQLite, so every test run covers the Snowflake dialect end to end without
+  credentials: login and OAuth2 token minting, CRUD and type round trips,
+  `executemany`, reflection of tables, views and constraints, error
+  propagation, proxy routing and the bindings on the wire. The same behaviour
+  suite runs against a real account with `DRLS_SNOWFLAKE_URL`.
+
+### Fixed
+
+- **OAuth2 and Negotiate credentials are now minted per connection.**
+  SQLAlchemy evaluates connect arguments once per engine, so the token minted
+  there in 0.5.0 was reused for the engine's lifetime and never refreshed.
+- **Snowflake `auth=oauth2` connected nowhere**: the driver validates the DSN
+  before its auth options apply and demanded a password. The DSN now declares
+  `authenticator=oauth`.
+- **Snowflake `Inspector.get_table_names()` / `get_view_names()` returned
+  nothing** — reflection only recognised SQLite's `table`/`view` spellings,
+  not Snowflake's and BigQuery's `BASE TABLE`/`VIEW`.
+- **Snowflake booleans rendered as `0`/`1`**, which Snowflake rejects in
+  `WHERE x IS 0`; the dialect now declares native booleans.
+- **Reflected Snowflake columns came back in arbitrary order**; they are now
+  sorted by ordinal position.
+
 ### Changed
 
+- **`[proxy]` config export does not reach the Go drivers.** The Go runtime
+  snapshots the environment at process start (verified on macOS and Linux),
+  so Flight SQL, Snowflake and BigQuery only honour `HTTP_PROXY` /
+  `HTTPS_PROXY` / `NO_PROXY` set by the shell or launcher. The export stays
+  for the package's own HTTP calls (OAuth2 token requests) and now logs a
+  WARNING naming the file. README updated accordingly.
+- `tests/test_snowflake_live.py` is now `tests/test_snowflake_e2e.py`,
+  parametrised over the fake endpoint and a live account.
+- `adbc-driver-snowflake` joins the `dev` extra.
 - CI's PostgreSQL integration tests now use the documented
   `postgresql+adbc://` URL spelling; the deprecated `adbc+postgresql://` form
   stays covered by `tests/test_url_schemes.py`.
@@ -22,6 +57,7 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   procedure now matches `publish.yml` (changelog section, tag on `main`,
   GitHub Release created by the workflow). The 0.5.0 changelog entry named a
   config file `sqlalchemy-adbc.toml` that never existed; corrected.
+
 
 ## [0.5.0] — 2026-11-07
 
