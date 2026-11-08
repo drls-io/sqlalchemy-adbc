@@ -6,6 +6,13 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **Python 3.11 support.** `requires-python` is now `>=3.12` and CI, tox,
+  ruff and mypy all target 3.12–3.14. 3.11 is supported upstream until
+  October 2027; dropping it early keeps a single toolchain target (mypy
+  already needed 3.12 to parse numpy's stubs). Install 0.6.x on 3.11.
+
 ### Added
 
 - **Flight SQL integration tests in CI** — a GizmoSQL (DuckDB backend) service
