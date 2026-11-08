@@ -2,6 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/sqlalchemy-adbc.svg)](https://pypi.org/project/sqlalchemy-adbc/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![CI](https://github.com/drls-io/sqlalchemy-adbc/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/drls-io/sqlalchemy-adbc/actions/workflows/ci.yml)
 
 Generic [SQLAlchemy](https://www.sqlalchemy.org/) dialect for any
 [Apache Arrow ADBC](https://arrow.apache.org/adbc/) driver — so any tool that
@@ -190,8 +191,9 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   column reflects as nullable=True
   ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13))
 
-Tests: 238 passing on Python 3.10–3.13, including 25 PostgreSQL
-integration tests against a service-container Postgres.
+Tests run on Python 3.10–3.13 in CI, including PostgreSQL integration
+tests against a service-container Postgres; see the badge above for the
+current state.
 
 ## Development
 
@@ -214,19 +216,22 @@ for project `sqlalchemy-adbc`, owner `drls-io`, repository `sqlalchemy-adbc`,
 workflow `publish.yml`, environment `pypi`. Same for TestPyPI if you want
 dry-runs.
 
-Cutting a release:
+Cutting a release (`X.Y.Z`):
 
-```bash
-# 1. Bump version in pyproject.toml
-# 2. Commit, tag, push
-git commit -am "chore: release v0.1.1"
-git tag v0.1.1
-git push && git push --tags
-```
+1. On a branch, bump `version` in `pyproject.toml` and move the
+   `[Unreleased]` entries in `CHANGELOG.md` under a new `## [X.Y.Z] — YYYY-MM-DD`
+   heading with a one-paragraph summary. Open a PR, let CI pass, merge.
+2. Tag the merge commit on `main` and push the tag:
 
-The `Publish to PyPI` workflow fires on the tag, builds sdist+wheel, and
-uploads to pypi.org. For TestPyPI dry-runs use `workflow_dispatch` with
-target `testpypi`.
+   ```bash
+   git checkout main && git pull
+   git tag vX.Y.Z && git push origin vX.Y.Z
+   ```
+
+The `Publish to PyPI` workflow fires on the tag, builds sdist and wheel,
+uploads to pypi.org via trusted publishing and then creates the GitHub
+Release from that version's changelog section. For TestPyPI dry-runs use
+`workflow_dispatch` with target `testpypi`.
 
 ## License
 

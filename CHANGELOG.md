@@ -6,6 +6,16 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- CI's PostgreSQL integration tests now use the documented
+  `postgresql+adbc://` URL spelling; the deprecated `adbc+postgresql://` form
+  stays covered by `tests/test_url_schemes.py`.
+- README: stale hard-coded test count replaced by the CI badge; the release
+  procedure now matches `publish.yml` (changelog section, tag on `main`,
+  GitHub Release created by the workflow). The 0.5.0 changelog entry named a
+  config file `sqlalchemy-adbc.toml` that never existed; corrected.
+
 ## [0.5.0] — 2026-11-07
 
 Proxy and authentication support (basic, Kerberos/Negotiate, OAuth2), PostgreSQL
@@ -16,7 +26,8 @@ and large fetch and reflection speedups.
 
 - **Proxy settings from a local config file** — `HTTP_PROXY` /
   `HTTPS_PROXY` / `NO_PROXY` are honoured as before; when unset, a
-  `[proxy]` section in `sqlalchemy-adbc.toml` is exported into the process
+  `[proxy]` section in the config file (`$SQLALCHEMY_ADBC_CONFIG` or
+  `~/.config/sqlalchemy-adbc/config.toml`) is exported into the process
   environment the Go-based drivers read, never overriding what you set.
 - **Authentication modes** — `auth=bearer|basic|negotiate|oauth2` and
   `auth_profile=<name>` on Flight SQL (basic Handshake, Kerberos/SPNEGO via
