@@ -6,6 +6,38 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **SQLAlchemy dialect compliance suite in CI** — `suite/` runs SQLAlchemy's
+  own dialect test suite against `sqlite+adbc` on every change (SQLAlchemy
+  2.0: 903 passed, 446 skipped; 2.1: 1022 passed, 400 skipped; 0 failed on
+  both); `docs/compliance.md` lists every exclusion with its reason.
+
+### Changed
+
+- **`sqlite+adbc` is now SQLAlchemy's SQLite dialect over an ADBC
+  connection.** SQL compilation, DDL, types and reflection come from
+  SQLAlchemy's `SQLiteDialect`; only the wire path is ADBC. Visible effects:
+  `DateTime`, `Date`, `Time`, `LargeBinary` and `Numeric` round-trip as Python
+  values (dates and times were ISO strings, `Time` binds failed), `RETURNING`
+  and multi-row `INSERT ... VALUES` work, `inserted_primary_key` works
+  without `lastrowid`, attached schemas are reflected, an unknown table
+  raises `NoSuchTableError`, and `:memory:` URLs share one connection
+  (`SingletonThreadPool`) as with pysqlite.
+- `ADBCDialect` is split into `ADBCConnectionMixin` (connection layer) and
+  the generic `GetObjects` reflection on top; other dialects are unchanged.
+
+### Fixed
+
+- **SQLite NOT NULL reflected as nullable on drivers before 1.13** (#13):
+  reflection now reads SQLite's own pragmas, so every driver version reports
+  it.
+- An INSERT or DDL statement no longer reports `returns_rows`; the ADBC
+  cursor's empty description is normalised to `None`.
+- `executemany` with all-empty parameter sets (`INSERT ... DEFAULT VALUES`)
+  inserts one row per set; the driver had bound an empty batch and inserted
+  none.
+
 ## [0.8.0] — 2026-11-08
 
 The Arrow-native path: `fetch_arrow_table`, `open_arrow_batch_reader` and

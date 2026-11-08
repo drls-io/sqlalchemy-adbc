@@ -1,25 +1,72 @@
-"""ADBC SQLite dialect — mostly useful for tests and local prototyping."""
+"""SQLAlchemy's SQLite dialect over an ADBC connection.
+
+``sqlite+adbc://`` keeps SQLAlchemy's own :class:`SQLiteDialect` for SQL
+compilation, DDL, types (ISO-text storage of dates and times, as pysqlite)
+and PRAGMA-based reflection (schemas via ``ATTACH``, NOT NULL, constraints,
+indexes), and only swaps the wire path: connections come from
+``adbc_driver_sqlite`` through :class:`~sqlalchemy_adbc.base.ADBCConnectionMixin`.
+That is what lets this dialect run SQLAlchemy's dialect compliance suite.
+
+Two things SQLAlchemy expects of a ``sqlite3``-like DBAPI module that the
+ADBC module does not provide are supplied by a thin proxy: ``Binary`` (used
+by ``LargeBinary`` binds) and ``sqlite_version_info`` (read once from a
+throwaway in-memory connection; the dialect tunes RETURNING and other
+features on it).
+"""
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
-from sqlalchemy.engine.interfaces import ReflectedIndex
+from sqlalchemy import pool
+from sqlalchemy.dialects.sqlite.base import SQLiteDialect, SQLiteExecutionContext
 from sqlalchemy.engine.url import URL
 
-from sqlalchemy_adbc.base import ADBCDialect
+from sqlalchemy_adbc.base import ADBCConnectionMixin, ADBCExecutionContext
 
 
-class ADBCSQLiteDialect(ADBCDialect):
-    # `name = "sqlite"` makes Alembic pick the standard SQLite DDL impl
-    # — we speak SQLite wire compat via ADBC, so that's correct.
-    name = "sqlite"
+class _SQLiteDBAPI:
+    """``adbc_driver_sqlite.dbapi`` plus ``Binary`` and ``sqlite_version_info``."""
+
+    def __init__(self, module: Any) -> None:
+        self._module = module
+        self.Binary = bytes
+        with module.connect(":memory:") as conn, conn.cursor() as cursor:
+            cursor.execute("SELECT sqlite_version()")
+            text = cursor.fetchone()[0]
+        self.sqlite_version_info: tuple[int, ...] = tuple(int(part) for part in text.split("."))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._module, name)
+
+
+class _ExecutionContext(ADBCExecutionContext, SQLiteExecutionContext):
+    """Column-wise Arrow cursor plus SQLite's dotted-column-name handling."""
+
+
+class ADBCSQLiteDialect(ADBCConnectionMixin, SQLiteDialect):
+    # `name = "sqlite"` (inherited) makes Alembic pick the standard SQLite
+    # DDL impl; `driver = "adbc"` is the wire path.
     driver = "adbc"
     driver_module = "adbc_driver_sqlite.dbapi"
     supports_statement_cache = True
+    execution_ctx_cls = _ExecutionContext
 
-    # SQLite's DBAPI is qmark; matches our base default.
-    paramstyle = "qmark"
+    @classmethod
+    def import_dbapi(cls) -> Any:
+        return _SQLiteDBAPI(importlib.import_module(cls.driver_module or ""))
+
+    @classmethod
+    def get_pool_class(cls, url: URL) -> type[pool.Pool]:
+        # As pysqlite: a file database can be shared by a QueuePool; an
+        # in-memory database lives in one connection, so keep a single one.
+        if url.database and url.database != ":memory:" and url.query.get("mode") != "memory":
+            return pool.QueuePool
+        return pool.SingletonThreadPool
+
+    def _get_server_version_info(self, connection: Any) -> tuple[int, ...]:
+        return tuple(self.dbapi.sqlite_version_info)  # type: ignore[union-attr]
 
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
         # adbc_driver_sqlite.dbapi.connect(uri=":memory:") — takes a filename.
@@ -28,68 +75,3 @@ class ADBCSQLiteDialect(ADBCDialect):
         if url.query:
             kwargs["db_kwargs"] = dict(url.query)
         return [], kwargs
-
-    # ── Index reflection ─────────────────────────────────────────────
-    #
-    # ADBC GetObjects lists SQLite indexes as entries with
-    # ``table_type='index'`` but doesn't carry their column lists, so
-    # we query the native catalog (``PRAGMA index_list`` +
-    # ``PRAGMA index_info``) directly. ``sqlite_autoindex_*`` entries
-    # are auto-generated for PRIMARY KEY / UNIQUE constraints and are
-    # already surfaced via ``get_pk_constraint`` / ``get_unique_constraints``
-    # — skip them to match SQLAlchemy's built-in sqlite dialect behavior.
-
-    def get_indexes(
-        self, connection: Any, table_name: str, schema: str | None = None, **kw: Any
-    ) -> list[ReflectedIndex]:
-        dbapi = self._adbc_connection(connection)
-        cursor = dbapi.cursor()
-        try:
-            # PRAGMA statements cannot be parameterized — SQLite ignores
-            # placeholders in that context and would execute the literal
-            # "?" as part of the name. Escape identifiers manually:
-            # double-quote and double any internal double-quotes per the
-            # SQL-92 identifier rule.
-            tbl = _sqlite_ident(table_name)
-            cursor.execute(f"PRAGMA index_list({tbl})")
-            # index_list rows: (seq, name, unique, origin, partial)
-            listings = cursor.fetchall()
-            out: list[ReflectedIndex] = []
-            for row in listings:
-                name = row[1]
-                is_unique = bool(row[2])
-                # SQLite auto-creates an index for every PRIMARY KEY and
-                # for some UNIQUE constraints; those are named
-                # ``sqlite_autoindex_<table>_<N>`` and are better reached
-                # via ``get_pk_constraint``/``get_unique_constraints``.
-                # User-created unique indexes (CREATE UNIQUE INDEX ...)
-                # DO belong here — SQLAlchemy's convention is that unique
-                # indexes surface in both get_indexes and
-                # get_unique_constraints so callers can distinguish.
-                if name.startswith("sqlite_autoindex_"):
-                    continue
-                idx = _sqlite_ident(name)
-                cursor.execute(f"PRAGMA index_info({idx})")
-                # index_info rows: (seqno, cid, column_name) — sort by
-                # seqno to preserve multi-column order.
-                col_rows = cursor.fetchall()
-                columns = [r[2] for r in sorted(col_rows, key=lambda r: r[0])]
-                out.append(
-                    {
-                        "name": name,
-                        "column_names": columns,
-                        "unique": is_unique,
-                    }
-                )
-            return out
-        finally:
-            cursor.close()
-
-
-def _sqlite_ident(name: str) -> str:
-    """Double-quote a SQLite identifier, escaping embedded double quotes.
-
-    SQLite supports the SQL-92 standard ``"name"`` form for delimited
-    identifiers; any ``"`` inside the name is escaped by doubling.
-    """
-    return '"' + name.replace('"', '""') + '"'
