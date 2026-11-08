@@ -153,3 +153,22 @@ def test_alembic_impl_resolves_for_bigquery():
     from alembic.ddl.impl import DefaultImpl
 
     assert DefaultImpl.get_by_dialect(dialect).__dialect__ == "bigquery"
+
+
+def test_identifier_escaping_is_backslash_based():
+    # GoogleSQL escapes a backtick inside a quoted identifier with a backslash;
+    # doubling it (SQLAlchemy's default) is a syntax error and leaving it bare
+    # ends the identifier early.
+    prep = dialect.identifier_preparer
+    assert prep.quote("a`b") == "`a\\`b`"
+    assert prep.quote("a\\b") == "`a\\\\b`"
+    assert prep._unescape_identifier(prep._escape_identifier("a`b\\c")) == "a`b\\c"
+
+
+def test_string_literals_escape_with_backslashes():
+    # ``'it''s'`` is "concatenated string literals" in GoogleSQL, not an escape.
+    t = sa.Table("t", sa.MetaData(), sa.Column("name", sa.String))
+    lit = lambda stmt: str(stmt.compile(dialect=dialect, compile_kwargs={"literal_binds": True}))  # noqa: E731
+    assert lit(sa.select(t).where(t.c.name == "it's")).endswith("WHERE t.name = 'it\\'s'")
+    assert lit(sa.select(t).where(t.c.name == "a\\b")).endswith("WHERE t.name = 'a\\\\b'")
+    assert lit(sa.select(sa.literal("x'y"))).startswith("SELECT 'x\\'y'")

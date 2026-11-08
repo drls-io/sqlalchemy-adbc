@@ -10,7 +10,8 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 - **BigQuery dialect speaks GoogleSQL.** Identifiers quote with backticks
   (`"..."` is a string literal in BigQuery, so any reserved-word or mixed-case
-  name used to be a syntax error); DDL emits `STRING(n)`, `INT64`, `FLOAT64`,
+  name used to be a syntax error), with backslash escaping of backticks inside
+  names and of quotes inside rendered string literals; DDL emits `STRING(n)`, `INT64`, `FLOAT64`,
   `BOOL`, `NUMERIC(p, s)`, `BYTES`, `DATETIME`, `TIMESTAMP`, `JSON` instead of
   `VARCHAR` / `BLOB` / `FLOAT`, which BigQuery rejects; primary and foreign keys
   render `NOT ENFORCED` (the only kind BigQuery has) and unique constraints are

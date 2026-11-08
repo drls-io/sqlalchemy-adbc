@@ -75,10 +75,16 @@ class BigQueryIdentifierPreparer(compiler.IdentifierPreparer):
     reserved_words = _RESERVED_WORDS
 
     def __init__(self, dialect: Any, **kw: Any) -> None:
-        # A backtick inside a quoted identifier is escaped with a backslash.
         kw.setdefault("initial_quote", "`")
-        kw.setdefault("escape_quote", "\\`")
         super().__init__(dialect, **kw)
+
+    # GoogleSQL escapes with backslashes inside quoted identifiers; doubling the
+    # backtick (the default) is a syntax error and a bare one ends the name.
+    def _escape_identifier(self, value: str) -> str:
+        return value.replace("\\", "\\\\").replace("`", "\\`")
+
+    def _unescape_identifier(self, value: str) -> str:
+        return value.replace("\\`", "`").replace("\\\\", "\\")
 
 
 class BigQueryTypeCompiler(compiler.GenericTypeCompiler):
@@ -139,6 +145,13 @@ class BigQueryTypeCompiler(compiler.GenericTypeCompiler):
 class BigQueryCompiler(compiler.SQLCompiler):
     def render_bind_cast(self, type_: Any, dbapi_type: Any, sqltext: str) -> str:
         return f"CAST({sqltext} AS {self.dialect.type_compiler_instance.process(dbapi_type)})"
+
+    def render_literal_value(self, value: Any, type_: Any) -> str:
+        # ``'it''s'`` is two concatenated literals in GoogleSQL (a syntax error
+        # on its own); quotes and backslashes are escaped with a backslash.
+        if isinstance(value, str) and isinstance(type_, (sa_types.String, sa_types.NullType)):
+            return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+        return super().render_literal_value(value, type_)
 
 
 class BigQueryDDLCompiler(compiler.DDLCompiler):
