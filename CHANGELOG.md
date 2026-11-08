@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-11-08
+
+Documentation and CI release: the README now leads with Flight SQL and
+enterprise authentication and carries a stability policy; CI runs on
+Ubuntu 26.04 with the Node 24 action majors.
+
 ### Changed
 
 - **README leads with Flight SQL and authentication.** The package is
@@ -22,6 +28,11 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 - **`adbc+<backend>://` URL spellings are removed in 1.0.0.** The warning now
   names the version. Use `<backend>+adbc://`.
+
+### Internal
+
+- CI and publish workflows run on `ubuntu-26.04` and `actions/checkout@v7`,
+  `setup-python@v7`, `upload-artifact@v7`, `download-artifact@v8` (Node 24).
 
 ## [0.9.1] — 2026-11-08
 
@@ -490,7 +501,8 @@ Initial public release.
   `adbc+<driver>://` URL resolves automatically
 - PyPI trusted publishing via OIDC
 
-[Unreleased]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.7.0...v0.8.0
