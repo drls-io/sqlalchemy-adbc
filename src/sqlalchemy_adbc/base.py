@@ -18,7 +18,7 @@ from __future__ import annotations
 import collections
 import importlib
 import warnings
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 from sqlalchemy.engine import reflection as sa_reflection
@@ -162,6 +162,14 @@ class ADBCDialect(DefaultDialect):
     map during column reflection; see :func:`reflection.adbc_type_to_sqla`.
     """
 
+    _connect_hook: Callable[[dict[str, Any]], None] | None = None
+    """Set by ``build_connect_args`` when a credential must be minted per
+    connection (an OAuth2 access token, a SPNEGO ticket). SQLAlchemy calls
+    ``create_connect_args`` once per engine, so anything minted there would
+    be reused for the engine's lifetime; :meth:`connect` runs the hook on a
+    copy of ``db_kwargs`` for every new DBAPI connection instead.
+    """
+
     driver_module: str | None = None
     """Dotted path to the concrete ADBC driver's ``.dbapi`` module.
 
@@ -181,6 +189,14 @@ class ADBCDialect(DefaultDialect):
             )
         return importlib.import_module(module_name)
 
+    def connect(self, *cargs: Any, **cparams: Any) -> Any:
+        if self._connect_hook is not None:
+            cparams = dict(cparams)
+            db_kwargs = dict(cparams.get("db_kwargs") or {})
+            self._connect_hook(db_kwargs)
+            cparams["db_kwargs"] = db_kwargs
+        return super().connect(*cargs, **cparams)
+
     def create_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
         """Translate a SQLAlchemy URL into ``(args, kwargs)`` for ADBC.
 
@@ -188,9 +204,11 @@ class ADBCDialect(DefaultDialect):
         """
         from sqlalchemy_adbc.proxy import ensure_proxy_env_once
 
-        # The Go drivers read HTTP(S)_PROXY / NO_PROXY from the environment
-        # at dial time; fill them from the local config before any connect.
+        # Export [proxy] from the local config into the environment for the
+        # package's own HTTP calls (OAuth2 token requests). The Go drivers
+        # read the environment they were started with; see proxy.py.
         ensure_proxy_env_once()
+        self._connect_hook = None
         if url.drivername.startswith("adbc+"):
             backend = url.get_driver_name()
             warnings.warn(

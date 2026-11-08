@@ -7,6 +7,7 @@ SQLAlchemy URLs to the expected driver args.
 
 from __future__ import annotations
 
+import sqlalchemy as sa
 from sqlalchemy.engine.url import make_url
 
 from sqlalchemy_adbc.flightsql import ADBCFlightSQLDialect
@@ -99,11 +100,29 @@ def test_auth_bearer_is_legacy_behaviour():
     assert legacy == explicit == {AUTH_HDR: "Bearer tok"}
 
 
+def _connect_db_kwargs(dialect, url_str, monkeypatch):
+    """Run ``create_connect_args`` + ``connect`` with a stub DBAPI; return db_kwargs."""
+    seen = []
+
+    class FakeDBAPI:
+        @staticmethod
+        def connect(*cargs, **cparams):
+            seen.append(cparams)
+            return object()
+
+    monkeypatch.setattr(type(dialect), "loaded_dbapi", FakeDBAPI, raising=False)
+    args, kw = dialect.create_connect_args(make_url(url_str))
+    dialect.connect(*args, **kw)
+    return seen[0]["db_kwargs"]
+
+
 def test_auth_negotiate_spn_is_the_connection_host(monkeypatch):
     import sqlalchemy_adbc.flightsql as fs
 
     monkeypatch.setattr(fs, "negotiate_header", lambda spn: f"Negotiate <{spn}>")
-    dbk = _build("flightsql+adbc://flight.example:443?auth=negotiate")[1]["db_kwargs"]
+    dbk = _connect_db_kwargs(
+        ADBCFlightSQLDialect(), "flightsql+adbc://flight.example:443?auth=negotiate", monkeypatch
+    )
     assert dbk[AUTH_HDR] == "Negotiate <HTTP@flight.example>"
     # A URL may not point the ticket at another service (relay risk).
     with pytest.raises(ArgumentError, match="spn may only be set in a config profile"):
@@ -118,7 +137,9 @@ def test_auth_negotiate_spn_from_profile(monkeypatch, tmp_path):
     p.write_text('[auth.krb]\ntype = "negotiate"\nspn = "HTTP@flight.corp.example"\n')
     p.chmod(0o600)
     monkeypatch.setenv("SQLALCHEMY_ADBC_CONFIG", str(p))
-    dbk = _build("flightsql+adbc://10.0.0.5:443?auth_profile=krb")[1]["db_kwargs"]
+    dbk = _connect_db_kwargs(
+        ADBCFlightSQLDialect(), "flightsql+adbc://10.0.0.5:443?auth_profile=krb", monkeypatch
+    )
     assert dbk[AUTH_HDR] == "Negotiate <HTTP@flight.corp.example>"
 
 
@@ -168,3 +189,39 @@ def test_auth_profile_from_config(tmp_path, monkeypatch):
 def test_unknown_auth_value():
     with pytest.raises(ArgumentError, match="auth must be one of"):
         _build("flightsql+adbc://h:443?auth=magic")
+
+
+def test_auth_negotiate_header_is_minted_per_connection(monkeypatch):
+    """A SPNEGO token is single use; ``create_connect_args`` runs once per
+    engine, so minting there would replay one token for every connection."""
+    import sqlalchemy_adbc.flightsql as fs
+
+    calls = []
+
+    def mint(spn):
+        calls.append(spn)
+        return f"Negotiate <{spn}#{len(calls)}>"
+
+    monkeypatch.setattr(fs, "negotiate_header", mint)
+    dialect = fs.ADBCFlightSQLDialect()
+    args, kw = dialect.create_connect_args(
+        sa.make_url("flightsql+adbc://flight.example:443?auth=negotiate")
+    )
+    assert calls == [] and AUTH_HDR not in kw.get("db_kwargs", {})
+
+    seen = []
+
+    class FakeDBAPI:
+        @staticmethod
+        def connect(*cargs, **cparams):
+            seen.append((cargs, cparams))
+            return object()
+
+    monkeypatch.setattr(fs.ADBCFlightSQLDialect, "loaded_dbapi", FakeDBAPI, raising=False)
+    dialect.connect(*args, **kw)
+    dialect.connect(*args, **kw)
+    assert [c[1]["db_kwargs"][AUTH_HDR] for c in seen] == [
+        "Negotiate <HTTP@flight.example#1>",
+        "Negotiate <HTTP@flight.example#2>",
+    ]
+    assert AUTH_HDR not in kw.get("db_kwargs", {})

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlalchemy as sa
 from sqlalchemy.engine.url import make_url
 
 from sqlalchemy_adbc.snowflake import ADBCSnowflakeDialect
@@ -69,36 +70,6 @@ import pytest  # noqa: E402
 from sqlalchemy.exc import ArgumentError  # noqa: E402
 
 
-def test_oauth2_mints_token_into_db_kwargs(monkeypatch):
-    import sqlalchemy_adbc.snowflake as sf
-
-    seen = {}
-
-    class Src:
-        def token(self):
-            return "minted"
-
-    def fake_source(settings):
-        seen["settings"] = settings
-        return Src()
-
-    monkeypatch.setattr(sf, "token_source_for", fake_source)
-    # Snowflake user stays in the DSN; the URL password is the OAuth2 client secret.
-    args, kw = _build(
-        "snowflake+adbc://u:sec@acct/db/s?warehouse=WH&auth=oauth2"
-        "&oauth2_token_url=https://idp/t&oauth2_client_id=c"
-    )
-    assert args == ["u@acct/db/s?warehouse=WH"]  # auth keys stripped, no password in DSN
-    assert kw["db_kwargs"] == {
-        "adbc.snowflake.sql.auth_type": "auth_oauth",
-        "adbc.snowflake.sql.client_option.auth_token": "minted",
-    }
-    assert (seen["settings"].oauth2_client_id, seen["settings"].oauth2_client_secret) == (
-        "c",
-        "sec",
-    )
-
-
 def test_negotiate_unsupported_on_snowflake():
     with pytest.raises(ArgumentError, match="not supported by the Snowflake driver"):
         _build("snowflake+adbc://u@acct/db?auth=negotiate")
@@ -110,3 +81,67 @@ def test_basic_is_default_and_unchanged():
         == _build("snowflake+adbc://u:p@acct/db")[0]
     )
     assert _build("snowflake+adbc://u:p@acct/db?auth=basic")[0] == ["u:p@acct/db"]
+
+
+def test_oauth2_dsn_declares_authenticator_and_token_is_minted_per_connection(monkeypatch):
+    """SQLAlchemy calls ``create_connect_args`` once per engine, so a token
+    minted there would never refresh; it has to be minted in ``connect``.
+    gosnowflake also validates the DSN before driver options apply, so the
+    DSN itself must say ``authenticator=oauth`` or it demands a password.
+    (Both found by the fake Snowflake endpoint.)"""
+    import sqlalchemy_adbc.snowflake as sf
+
+    calls = []
+
+    class Src:
+        def token(self):
+            calls.append(1)
+            return f"minted-{len(calls)}"
+
+    monkeypatch.setattr(sf, "token_source_for", lambda settings: Src())
+    dialect = sf.ADBCSnowflakeDialect()
+    args, kw = dialect.create_connect_args(
+        sa.make_url(
+            "snowflake+adbc://u:sec@acct/db/s?warehouse=WH&auth=oauth2"
+            "&oauth2_token_url=https://idp/t&oauth2_client_id=c"
+        )
+    )
+    assert args == ["u@acct/db/s?warehouse=WH&authenticator=oauth"]
+    assert kw == {"db_kwargs": {"adbc.snowflake.sql.auth_type": "auth_oauth"}}
+    assert calls == []  # nothing minted at engine creation
+
+    seen = []
+
+    class FakeDBAPI:
+        @staticmethod
+        def connect(*cargs, **cparams):
+            seen.append((cargs, cparams))
+            return object()
+
+    monkeypatch.setattr(sf.ADBCSnowflakeDialect, "loaded_dbapi", FakeDBAPI, raising=False)
+    dialect.connect(*args, **kw)
+    dialect.connect(*args, **kw)
+    assert [c[1]["db_kwargs"]["adbc.snowflake.sql.client_option.auth_token"] for c in seen] == [
+        "minted-1",
+        "minted-2",
+    ]
+    # The engine-level kwargs are never mutated.
+    assert kw == {"db_kwargs": {"adbc.snowflake.sql.auth_type": "auth_oauth"}}
+
+
+def test_password_login_connect_passes_kwargs_through(monkeypatch):
+    import sqlalchemy_adbc.snowflake as sf
+
+    seen = []
+
+    class FakeDBAPI:
+        @staticmethod
+        def connect(*cargs, **cparams):
+            seen.append((cargs, cparams))
+            return object()
+
+    monkeypatch.setattr(sf.ADBCSnowflakeDialect, "loaded_dbapi", FakeDBAPI, raising=False)
+    dialect = sf.ADBCSnowflakeDialect()
+    args, kw = dialect.create_connect_args(sa.make_url("snowflake+adbc://u:p@acct/db/s"))
+    dialect.connect(*args, **kw)
+    assert seen == [(("u:p@acct/db/s",), {})]
