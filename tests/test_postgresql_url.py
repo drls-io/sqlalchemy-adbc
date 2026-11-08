@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy.engine.url import make_url
 
 from sqlalchemy_adbc.postgresql import ADBCPostgreSQLDialect
@@ -94,3 +95,18 @@ def test_password_no_username_still_builds():
     args, _ = _build("postgresql+adbc://:pw@host/db")
     # We emit auth=":pw@" — libpq accepts this as password-only.
     assert args[0].startswith("postgresql://:pw@host")
+
+
+# Contributed by Albert T. Wong (#20): literal percent sequences in a database
+# name must reach libpq unchanged on both SQLAlchemy 2.0 (which keeps the path
+# encoded) and 2.1 (which decodes it), and an IPv6 host needs its brackets back
+# because SQLAlchemy strips them from ``url.host``.
+@pytest.mark.parametrize("database", ["my%2520db", "my%2Fdb", "my%3Fdb", "my%23db"])
+def test_database_escapes_are_preserved(database: str) -> None:
+    args, _ = _build(f"postgresql+adbc://host/{database}")
+    assert args == [f"postgresql://host/{database}"]
+
+
+def test_ipv6_host_is_bracketed() -> None:
+    args, _ = _build("postgresql+adbc://user:pass@[::1]:5432/mydb")
+    assert args == ["postgresql://user:pass@[::1]:5432/mydb"]

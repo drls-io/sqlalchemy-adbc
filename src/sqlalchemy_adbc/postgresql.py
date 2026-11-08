@@ -64,6 +64,8 @@ class ADBCPostgreSQLDialect(ADBCDialect):
         password = f":{quote(url.password, safe='')}" if url.password else ""
         auth = f"{user}{password}@" if user or url.password else ""
         host = url.host or "localhost"
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"  # SQLAlchemy strips the brackets from an IPv6 host
         port = f":{url.port}" if url.port else ""
         database = ""
         if url.database:

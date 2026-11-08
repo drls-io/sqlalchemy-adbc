@@ -6,6 +6,30 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Thanks to Albert T. Wong ([@alberttwong](https://github.com/alberttwong)) for
+finding and fixing the three items below while putting the dialect in front of
+Superset with Redis's Arrow Flight SQL server (#17, #20).
+
+### Fixed
+
+- **Flight SQL reflection with upper-case table types and name-less column
+  types.** Some servers report `TABLE` / `VIEW` and fill in only the numeric
+  `xdbc_data_type`; the Inspector returned no tables and every column was
+  `NullType`. Table-type matching is case-insensitive everywhere (including
+  `find_table`'s index skip), and columns without a recognised
+  `xdbc_type_name` fall back to the XDBC/ODBC type code (DATETIME and INTERVAL
+  codes stay `NullType` because they need subtype metadata).
+- **PostgreSQL IPv6 hosts.** SQLAlchemy strips the brackets from `[::1]`, so
+  the libpq URI came out as `postgresql://user@::1:5432/db`. Brackets are
+  restored. Database names with literal percent sequences (`my%2520db`,
+  `my%2Fdb`) are pinned by tests on both SQLAlchemy lines (#19).
+
+### Changed
+
+- **PostgreSQL extra requires `adbc-driver-postgresql>=1.13.0`.** 1.0.0 fails
+  the typed read/write tests with "Prepared statements returning result sets
+  are not implemented"; 1.13.0 is the version those tests were run on (#18).
+
 ## [0.9.0] — 2026-11-08
 
 `sqlite+adbc` is now SQLAlchemy's own SQLite dialect over an ADBC connection
