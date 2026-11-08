@@ -208,3 +208,105 @@ def test_encode_rowset_nullable_flags():
         [("A", parse_type("INT"), [1]), ("B", parse_type("INT"), [1])], nullable=[False, True]
     )
     assert [r["nullable"] for r in rowtype] == [False, True]
+
+
+# ── sqlengine.py: tokeniser, rewrite, bindings ───────────────────────
+
+
+def test_tokenize_preserves_quotes_and_strings():
+    from tests.fake_snowflake.sqlengine import tokenize
+
+    sql = """select "A b", 'it''s', x -- c\nfrom t /* z */"""
+    toks = tokenize(sql)
+    kinds = [t.kind for t in toks if t.kind != "space"]
+    assert kinds == [
+        "word",
+        "quoted",
+        "punct",
+        "string",
+        "punct",
+        "word",
+        "comment",
+        "word",
+        "word",
+        "comment",
+    ]
+    assert "".join(t.text for t in toks) == sql
+
+
+def test_ddl_uppercases_bare_identifiers_only():
+    from tests.fake_snowflake.sqlengine import rewrite_statement
+
+    sql, pre = rewrite_statement(
+        "create table t (id int not null, name varchar(10) comment 'Hi there', \"Mixed\" date)",
+        schema="PUBLIC",
+        database="DB",
+    )
+    assert pre == []
+    assert sql == 'CREATE TABLE T (ID INT NOT NULL, NAME VARCHAR(10), "Mixed" DATE)'
+
+
+def test_create_or_replace_transient_becomes_drop_plus_create():
+    from tests.fake_snowflake.sqlengine import rewrite_statement
+
+    sql, pre = rewrite_statement(
+        "create or replace transient table s.t (x int) cluster by (x)", schema="S", database="DB"
+    )
+    assert pre == ["DROP TABLE IF EXISTS T"]
+    assert sql == "CREATE TABLE T (X INT)"
+
+
+def test_schema_and_database_qualifiers_are_stripped_everywhere():
+    from tests.fake_snowflake.sqlengine import rewrite_statement
+
+    sql, _ = rewrite_statement(
+        'SELECT t.id FROM "DB"."PUBLIC"."T" AS t JOIN public.u ON u.id = t.id',
+        schema="PUBLIC",
+        database="DB",
+    )
+    assert sql == 'SELECT t.id FROM "T" AS t JOIN u ON u.id = t.id'
+    sql, _ = rewrite_statement("INSERT INTO other.t VALUES (?)", schema="PUBLIC", database="DB")
+    assert sql == "INSERT INTO other.t VALUES (?)"
+
+
+def test_identity_and_autoincrement_dropped():
+    from tests.fake_snowflake.sqlengine import rewrite_statement
+
+    sql, _ = rewrite_statement(
+        "CREATE TABLE t (id INT IDENTITY(1,1) PRIMARY KEY, n INT AUTOINCREMENT)",
+        schema="PUBLIC",
+        database="DB",
+    )
+    assert sql == "CREATE TABLE T (ID INT PRIMARY KEY, N INT)"
+
+
+def test_statement_kind():
+    from tests.fake_snowflake.sqlengine import statement_kind
+
+    assert statement_kind(" select 1") == "SELECT"
+    assert statement_kind("ALTER SESSION SET X=1") == "ALTER_SESSION"
+    assert statement_kind("alter table t add x int") == "ALTER"
+    assert statement_kind("desc table t") == "DESC"
+    assert statement_kind("DESCRIBE TABLE t") == "DESC"
+    assert statement_kind("-- hi\nSHOW TERSE OBJECTS") == "SHOW"
+    assert statement_kind("WITH x AS (SELECT 1) SELECT * FROM x") == "SELECT"
+    assert statement_kind("BEGIN") == "BEGIN" and statement_kind("rollback") == "ROLLBACK"
+    assert statement_kind("USE SCHEMA X") == "USE" and statement_kind("") == "OTHER"
+
+
+def test_coerce_bindings_positional_and_named():
+    from tests.fake_snowflake.sqlengine import coerce_bindings
+
+    assert coerce_bindings(None) == []
+    assert coerce_bindings(
+        {"2": {"type": "TEXT", "value": "b"}, "1": {"type": "FIXED", "value": "7"}}
+    ) == [7, "b"]
+    assert coerce_bindings(
+        {
+            "1": {"type": "FIXED", "value": "1.50"},
+            "2": {"type": "REAL", "value": "2"},
+            "3": {"type": "BOOLEAN", "value": "true"},
+            "4": {"type": "TEXT", "value": None},
+        }
+    ) == ["1.50", 2.0, 1, None]
+    assert coerce_bindings({"CATALOG": {"type": "TEXT", "value": "%"}}) == {"CATALOG": "%"}
