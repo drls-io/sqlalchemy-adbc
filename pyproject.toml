@@ -54,6 +54,10 @@ dev = [
     # The fake Snowflake endpoint (tests/fake_snowflake) drives the real
     # driver, so every CI cell covers the Snowflake dialect end to end.
     "adbc-driver-snowflake>=1.0",
+    # Flight SQL suite against the GizmoSQL service container (ci.yml).
+    "adbc-driver-flightsql>=1.0",
+    # pd.read_sql smoke test in the Flight SQL suite.
+    "pandas>=2.0",
     # Alembic autogenerate tests (test_alembic_autogenerate.py) rely on
     # the Inspector contract we implemented in #1 — pinning the dev
     # pin ensures CI exercises that integration path.
@@ -95,9 +99,11 @@ select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["E501"]
 
 [tool.mypy]
-# Matches requires-python; runtime compat across 3.11–3.14 is covered by
-# the pytest matrix.
-python_version = "3.11"
+# 3.12, not the 3.11 floor: numpy's stubs (pulled in by pandas, reached
+# through pyarrow-stubs) use the 3.12 `type` statement and mypy refuses to
+# parse them under 3.11. Runtime compatibility with 3.11 is covered by the
+# pytest matrix.
+python_version = "3.12"
 strict_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true

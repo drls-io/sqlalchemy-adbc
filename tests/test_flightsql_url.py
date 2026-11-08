@@ -225,3 +225,18 @@ def test_auth_negotiate_header_is_minted_per_connection(monkeypatch):
         "Negotiate <HTTP@flight.example#2>",
     ]
     assert AUTH_HDR not in kw.get("db_kwargs", {})
+
+
+def test_wait_for_flightsql_gives_up_with_the_last_error():
+    """The CI service container may still be starting when pytest begins; the
+    fixture retries, but must surface the real error once the deadline passes."""
+    import sqlalchemy as sa
+
+    from tests.conftest import wait_for_flightsql
+
+    e = sa.create_engine("flightsql+adbc://u:p@127.0.0.1:1?auth=basic&tls=false")
+    try:
+        with pytest.raises(sa.exc.DBAPIError):
+            wait_for_flightsql(e, timeout=1.0)
+    finally:
+        e.dispose()
