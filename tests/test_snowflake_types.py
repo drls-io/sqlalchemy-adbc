@@ -138,6 +138,6 @@ def test_snowflake_dialect_exposes_registry():
 def test_timestamp_values_pass_through_untouched():
     d = ADBCSnowflakeDialect()
     tsz = adbc_type_to_sqla("TIMESTAMP_TZ", ischema_names=snowflake_ischema_names)
-    aware = dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.timezone.utc)
+    aware = dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.UTC)
     proc = tsz.result_processor(d, None)
     assert proc is None or proc(aware) == aware

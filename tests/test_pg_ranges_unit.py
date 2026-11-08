@@ -46,7 +46,7 @@ from sqlalchemy_adbc.postgresql_ranges import (  # noqa: E402
     parse_range,
 )
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 @pytest.mark.parametrize(
