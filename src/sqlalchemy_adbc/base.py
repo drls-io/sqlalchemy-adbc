@@ -64,6 +64,16 @@ class ColumnwiseCursor:
 
     def executemany(self, operation: Any, seq_of_parameters: Any) -> Any:
         self._reset()
+        # Dialects may hand over an Arrow record batch (Snowflake's typed
+        # binds); only plain sequences of parameter sets are inspected here.
+        if isinstance(seq_of_parameters, (list, tuple)) and seq_of_parameters:
+            if all(not p for p in seq_of_parameters):
+                # ``INSERT INTO t DEFAULT VALUES`` for N empty parameter sets:
+                # the driver binds an empty batch and inserts nothing, so run
+                # the statement once per set instead.
+                for _ in seq_of_parameters:
+                    self._cursor.execute(operation)
+                return None
         return self._cursor.executemany(operation, seq_of_parameters)
 
     def _fill(self, want: int | None) -> None:
@@ -111,7 +121,10 @@ class ColumnwiseCursor:
 
     @property
     def description(self) -> Sequence[Any] | None:
-        return self._cursor.description
+        # The ADBC cursor reports ``[]`` for a statement without result columns
+        # (INSERT, DDL); DBAPI says None, and SQLAlchemy's ``returns_rows``
+        # keys on that.
+        return self._cursor.description or None
 
     @property
     def rowcount(self) -> int:

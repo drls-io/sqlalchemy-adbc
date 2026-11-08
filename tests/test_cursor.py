@@ -133,3 +133,34 @@ def test_dml_and_ddl_through_proxy(engine):
         c.exec_driver_sql("CREATE TABLE t2 (x INTEGER)")
     with engine.connect() as c:
         assert c.exec_driver_sql("SELECT count(*) FROM t").scalar() == 7
+
+
+# ── found by SQLAlchemy's dialect compliance suite ───────────────────
+
+
+def test_statement_without_result_columns_reports_no_description():
+    """The ADBC cursor reports ``[]`` for an INSERT's description; DBAPI says
+    None, and SQLAlchemy's ``returns_rows`` keys on that."""
+    import sqlalchemy as sa
+
+    e = sa.create_engine("sqlite+adbc:///:memory:")
+    with e.begin() as c:
+        c.exec_driver_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, d TEXT)")
+        r = c.exec_driver_sql("INSERT INTO t (d) VALUES ('x')")
+        assert r.returns_rows is False
+        assert c.exec_driver_sql("SELECT d FROM t").returns_rows is True
+    e.dispose()
+
+
+def test_executemany_with_empty_parameter_sets_runs_once_per_set():
+    """``INSERT INTO t DEFAULT VALUES`` executed for ``[{}, {}, {}]`` must insert
+    three rows; the ADBC driver binds an empty batch and inserts none."""
+    import sqlalchemy as sa
+
+    e = sa.create_engine("sqlite+adbc:///:memory:")
+    t = sa.Table("t", sa.MetaData(), sa.Column("id", sa.Integer, primary_key=True))
+    t.metadata.create_all(e)
+    with e.begin() as c:
+        c.execute(t.insert(), [{}, {}, {}])
+        assert c.execute(sa.select(sa.func.count()).select_from(t)).scalar() == 3
+    e.dispose()
