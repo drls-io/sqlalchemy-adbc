@@ -64,6 +64,33 @@ _TYPE_MAP: dict[str, type[sa_types.TypeEngine[Any]]] = {
     "UUID": sa_types.Uuid,
 }
 
+# XDBC/ODBC SQL type codes (``xdbc_data_type``). Some Flight SQL servers fill
+# these in without ``xdbc_type_name``. DATETIME (9) and INTERVAL (10) need
+# subtype metadata, so they stay unmapped rather than guessing a scalar type.
+_XDBC_TYPE_MAP: dict[int, type[sa_types.TypeEngine[Any]]] = {
+    -9: sa_types.String,  # WVARCHAR
+    -8: sa_types.CHAR,  # WCHAR
+    -7: sa_types.Boolean,  # BIT
+    -6: sa_types.SmallInteger,  # TINYINT
+    -5: sa_types.BigInteger,
+    -4: sa_types.LargeBinary,  # LONGVARBINARY
+    -3: sa_types.LargeBinary,  # VARBINARY
+    -2: sa_types.LargeBinary,  # BINARY
+    -1: sa_types.Text,  # LONGVARCHAR
+    1: sa_types.CHAR,
+    2: sa_types.Numeric,
+    3: sa_types.Numeric,  # DECIMAL
+    4: sa_types.Integer,
+    5: sa_types.SmallInteger,
+    6: sa_types.Float,
+    7: sa_types.Float,  # REAL
+    8: sa_types.Float,  # DOUBLE
+    12: sa_types.String,  # VARCHAR
+    91: sa_types.Date,
+    92: sa_types.Time,
+    93: sa_types.DateTime,
+}
+
 
 def adbc_type_to_sqla(
     type_name: str | None,
@@ -71,8 +98,12 @@ def adbc_type_to_sqla(
     ischema_names: dict[str, Any] | None = None,
     size: int | None = None,
     decimal_digits: int | None = None,
+    data_type: int | None = None,
 ) -> sa_types.TypeEngine[Any]:
-    """Map an ADBC ``xdbc_type_name`` to a SQLAlchemy type instance.
+    """Map an ADBC ``xdbc_type_name`` (or numeric ``xdbc_data_type``) to a type.
+
+    A recognised name wins; when the name is missing or unknown the numeric
+    XDBC code is tried; anything else is ``NullType``.
 
     ``ischema_names`` is an optional per-dialect type registry merged
     on top of the generic map — Postgres passes its ``pg_ischema_names``
@@ -82,9 +113,7 @@ def adbc_type_to_sqla(
     driver's ``xdbc_column_size`` / ``xdbc_decimal_digits`` into the type
     (Snowflake ``NUMBER(38,0)`` → ``NUMBER(precision=38, scale=0)``).
     """
-    if not type_name:
-        return sa_types.NullType()
-    normalized = type_name.strip().upper()
+    normalized = (type_name or "").strip().upper()
     # Strip trailing length/precision (e.g. ``VARCHAR(32)`` → ``VARCHAR``).
     base = normalized.split("(", 1)[0].strip()
     # Dialect-specific overrides win over the generic map — this is how
@@ -96,6 +125,8 @@ def adbc_type_to_sqla(
                 return entry()
             return entry(size, decimal_digits)
     cls = _TYPE_MAP.get(base) or _TYPE_MAP.get(normalized)
+    if cls is None and data_type is not None:
+        cls = _XDBC_TYPE_MAP.get(data_type)
     if cls is None:
         return sa_types.NullType()
     return cls()
@@ -147,7 +178,7 @@ def find_table(
             for tbl in sch.get("db_schema_tables") or []:
                 if tbl.get("table_name") != table_name:
                     continue
-                if tbl.get("table_type") in {"index", "sqlite_autoindex"}:
+                if str(tbl.get("table_type") or "").lower() in {"index", "sqlite_autoindex"}:
                     continue
                 return tbl
     return None
@@ -196,6 +227,7 @@ def columns_from_table(
                 "name": name,
                 "type": adbc_type_to_sqla(
                     col.get("xdbc_type_name"),
+                    data_type=col.get("xdbc_data_type"),
                     ischema_names=ischema_names,
                     size=col.get("xdbc_column_size"),
                     decimal_digits=col.get("xdbc_decimal_digits"),
