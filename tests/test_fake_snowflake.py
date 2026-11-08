@@ -12,6 +12,8 @@ import base64
 import datetime as dt
 import io
 import json
+import urllib.error
+import urllib.request
 from decimal import Decimal
 from typing import Any
 
@@ -245,7 +247,7 @@ def test_ddl_uppercases_bare_identifiers_only():
         database="DB",
     )
     assert pre == []
-    assert sql == 'CREATE TABLE T (ID INT NOT NULL, NAME VARCHAR(10), "Mixed" DATE)'
+    assert sql == 'CREATE TABLE T (ID NUMBER(38,0) NOT NULL, NAME VARCHAR(10), "Mixed" DATE)'
 
 
 def test_create_or_replace_transient_becomes_drop_plus_create():
@@ -255,7 +257,7 @@ def test_create_or_replace_transient_becomes_drop_plus_create():
         "create or replace transient table s.t (x int) cluster by (x)", schema="S", database="DB"
     )
     assert pre == ["DROP TABLE IF EXISTS T"]
-    assert sql == "CREATE TABLE T (X INT)"
+    assert sql == "CREATE TABLE T (X NUMBER(38,0))"
 
 
 def test_schema_and_database_qualifiers_are_stripped_everywhere():
@@ -279,7 +281,7 @@ def test_identity_and_autoincrement_dropped():
         schema="PUBLIC",
         database="DB",
     )
-    assert sql == "CREATE TABLE T (ID INT PRIMARY KEY, N INT)"
+    assert sql == "CREATE TABLE T (ID NUMBER(38,0) PRIMARY KEY, N NUMBER(38,0))"
 
 
 def test_statement_kind():
@@ -694,3 +696,271 @@ def test_desc_table_layout(session):
     with pytest.raises(SnowflakeError) as e:
         session.execute("DESC TABLE NOPE")
     assert e.value.code == "002003"
+
+
+# ── server.py: wire protocol ─────────────────────────────────────────
+
+
+def _post(url, body, headers=None):
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", **(headers or {})},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return resp.status, json.loads(resp.read())
+
+
+@pytest.fixture
+def server(tmp_path):
+    from tests.fake_snowflake import FakeSnowflake
+
+    with FakeSnowflake(tmp_path / "srv.db", oauth_client=("cid", "sec")) as s:
+        yield s
+
+
+def _login(server, data=None, params="databaseName=FAKEDB&schemaName=PUBLIC&warehouse=WH"):
+    status, body = _post(
+        f"{server.base_url}/session/v1/login-request?{params}",
+        {"data": {"ACCOUNT_NAME": "A", "LOGIN_NAME": "u", "PASSWORD": "p", **(data or {})}},
+    )
+    assert status == 200 and body["success"], body
+    return body["data"]["token"]
+
+
+def _query(server, token, sql, bindings=None):
+    body = {"sqlText": sql, "sequenceId": 1}
+    if bindings:
+        body["bindings"] = bindings
+    return _post(
+        f"{server.base_url}/queries/v1/query-request",
+        body,
+        {"Authorization": f'Snowflake Token="{token}"'},
+    )[1]
+
+
+def test_login_query_and_recorders(server):
+    token = _login(server)
+    assert server.logins[-1]["PASSWORD"] == "***" and server.logins[-1]["LOGIN_NAME"] == "u"
+    body = _query(server, token, "SELECT 1 AS X")
+    assert body["success"] and body["data"]["queryResultFormat"] == "arrow"
+    assert body["data"]["rowtype"][0]["name"] == "X" and body["data"]["total"] == 1
+    assert decode_rowset(body["data"]["rowsetBase64"]).column("X").to_pylist() == [Decimal("1")]
+    assert server.queries == ["SELECT 1 AS X"]
+    assert server.requests[-1][0] == "/queries/v1/query-request"
+    assert server.requests[-1][1]["sqlText"] == "SELECT 1 AS X"
+    server.reset_log()
+    assert server.queries == [] and server.logins == [] and server.requests == []
+
+
+def test_login_reply_shape_and_session_info(server):
+    status, body = _post(
+        f"{server.base_url}/session/v1/login-request?databaseName=FAKEDB&schemaName=PUBLIC&warehouse=WH&roleName=R",
+        {"data": {"ACCOUNT_NAME": "A", "LOGIN_NAME": "u", "PASSWORD": "p"}},
+    )
+    data = body["data"]
+    assert data["masterToken"] and data["validityInSeconds"] > 0 and data["sessionId"]
+    assert data["sessionInfo"] == {
+        "databaseName": "FAKEDB",
+        "schemaName": "PUBLIC",
+        "warehouseName": "WH",
+        "roleName": "R",
+    }
+    assert any(p["name"] == "TIMESTAMP_OUTPUT_FORMAT" for p in data["parameters"])
+
+
+def test_error_and_unknown_session(server):
+    token = _login(server)
+    body = _query(server, token, "SELECT * FROM NOPE")
+    assert body["success"] is False and body["code"] == "002003"
+    assert body["data"]["sqlState"] == "42S02" and "NOPE" in body["message"]
+    body = _query(server, "bogus", "SELECT 1")
+    assert body["success"] is False and body["code"] == "390104"
+
+
+def test_two_sessions_have_independent_transactions(server):
+    a, b = _login(server), _login(server)
+    assert _query(server, a, "BEGIN")["success"] and _query(server, b, "BEGIN")["success"]
+    assert _query(server, a, "CREATE TABLE T (X INT)")["success"]
+    assert _query(server, a, "COMMIT")["success"] and _query(server, b, "ROLLBACK")["success"]
+    assert _query(server, b, "SELECT count(*) AS c FROM T")["success"]
+
+
+def test_oauth_token_endpoint_and_login(server):
+    import base64 as b64
+
+    req = urllib.request.Request(
+        f"{server.base_url}/oauth/token",
+        data=b"grant_type=client_credentials&scope=s1",
+        headers={
+            "Authorization": "Basic " + b64.b64encode(b"cid:sec").decode(),
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        tok = json.loads(resp.read())
+    assert tok["token_type"] == "Bearer" and tok["access_token"] in server.issued_tokens
+    assert server.token_requests[-1]["scope"] == "s1"
+    _login(server, {"AUTHENTICATOR": "OAUTH", "TOKEN": tok["access_token"], "PASSWORD": ""})
+    assert server.logins[-1]["AUTHENTICATOR"] == "OAUTH"
+    assert server.logins[-1]["TOKEN"] == tok["access_token"]
+    status, body = _post(
+        f"{server.base_url}/session/v1/login-request",
+        {"data": {"ACCOUNT_NAME": "A", "AUTHENTICATOR": "OAUTH", "TOKEN": "forged"}},
+    )
+    assert status == 200 and body["success"] is False and body["code"] == "390303"
+    bad = urllib.request.Request(
+        f"{server.base_url}/oauth/token",
+        data=b"grant_type=client_credentials",
+        headers={"Authorization": "Basic " + b64.b64encode(b"cid:wrong").decode()},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(bad, timeout=5)
+    assert e.value.code == 401
+
+
+def test_absolute_form_target_is_served_and_recorded(server):
+    import http.client
+
+    conn = http.client.HTTPConnection(server.host, server.port, timeout=5)
+    conn.request(
+        "POST",
+        "http://snowflake.invalid/session/v1/login-request?databaseName=FAKEDB",
+        body=json.dumps({"data": {"ACCOUNT_NAME": "A", "LOGIN_NAME": "u", "PASSWORD": "p"}}),
+        headers={"Host": "snowflake.invalid", "Content-Type": "application/json"},
+    )
+    body = json.loads(conn.getresponse().read())
+    assert body["success"] and server.proxied_hosts == ["snowflake.invalid"]
+
+
+def test_gzip_body_and_misc_routes(server):
+    import gzip
+
+    raw = gzip.compress(
+        json.dumps({"data": {"ACCOUNT_NAME": "A", "LOGIN_NAME": "u", "PASSWORD": "p"}}).encode()
+    )
+    req = urllib.request.Request(
+        f"{server.base_url}/session/v1/login-request",
+        data=raw,
+        headers={"Content-Encoding": "gzip", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        token = json.loads(resp.read())["data"]["token"]
+    for path in ["/telemetry/send", "/session/token-request", "/session?delete=true"]:
+        status, body = _post(
+            f"{server.base_url}{path}", {}, {"Authorization": f'Snowflake Token="{token}"'}
+        )
+        assert status == 200 and body["success"]
+    assert _query(server, token, "SELECT 1")["code"] == "390104"  # deleted session
+
+
+def test_db_kwargs_point_the_driver_at_the_server(server):
+    from tests.fake_snowflake import endpoint_db_kwargs
+
+    kw = server.db_kwargs()
+    assert kw["adbc.snowflake.sql.uri.host"] == server.host
+    assert kw["adbc.snowflake.sql.uri.port"] == str(server.port)
+    assert kw["adbc.snowflake.sql.uri.protocol"] == "http"
+    assert kw["adbc.snowflake.sql.client_option.login_timeout"] == "8s"
+    assert (
+        server.db_kwargs(host="snowflake.invalid")["adbc.snowflake.sql.uri.host"]
+        == "snowflake.invalid"
+    )
+    assert endpoint_db_kwargs("h", 80)["adbc.snowflake.sql.uri.port"] == "80"
+
+
+def test_dml_and_ddl_answers_use_json_result_format(server):
+    # Snowflake returns DML/DDL results as JSON rows, and the driver takes a
+    # non-empty ``rowset`` as the signal to read JSON instead of Arrow, so the
+    # two must never be sent together.
+    token = _login(server)
+    body = _query(server, token, "CREATE TABLE T (X INT)")
+    assert body["data"]["queryResultFormat"] == "json"
+    assert body["data"]["rowset"] == [["Table T successfully created."]]
+    assert "rowsetBase64" not in body["data"]
+    body = _query(server, token, "INSERT INTO T VALUES (1), (2)")
+    assert body["data"]["queryResultFormat"] == "json" and body["data"]["rowset"] == [["2"]]
+    assert body["data"]["statementTypeId"] == 0x3100
+    body = _query(server, token, "SELECT X FROM T")
+    assert body["data"]["queryResultFormat"] == "arrow" and "rowset" not in body["data"]
+
+
+# ── regressions found with the real driver ───────────────────────────
+
+
+def test_create_table_normalises_column_types_for_sqlite_affinity():
+    # SQLite picks a storage affinity from the declared type name: anything
+    # containing "INT" (STRING!) becomes INTEGER, BINARY falls to NUMERIC and
+    # turns the hex text '0102' into 102. Declared types are therefore
+    # rewritten to Snowflake's canonical form, with BLOB spliced into BINARY.
+    from tests.fake_snowflake.sqlengine import rewrite_statement
+
+    sql, _ = rewrite_statement(
+        "CREATE TABLE t (a STRING, b BINARY, c INT, d DOUBLE, e DATETIME, "
+        "f VARCHAR(5) NOT NULL DEFAULT 'x', g NUMERIC(10, 2) PRIMARY KEY, h VARBINARY(16), "
+        "i time, \"j\" TIMESTAMP_TZ(3) comment 'c', k boolean, PRIMARY KEY (c), UNIQUE (a))",
+        schema="PUBLIC",
+        database="DB",
+    )
+    assert sql == (
+        "CREATE TABLE T (A VARCHAR(16777216), B BINARY BLOB(8388608), C NUMBER(38,0), D FLOAT, "
+        "E TIMESTAMP_NTZ(9), F VARCHAR(5) NOT NULL DEFAULT 'x', G NUMBER(10,2) PRIMARY KEY, "
+        'H BINARY BLOB(16), I TIME(9), "j" TIMESTAMP_TZ(3), K BOOLEAN, PRIMARY KEY (C), UNIQUE (A))'
+    )
+    assert parse_type("BINARY BLOB(16)") == SnowflakeType("BINARY", length=16)
+    assert parse_type("BINARY BLOB(16)").declared() == "BINARY(16)"
+
+
+def test_binary_and_string_values_survive_sqlite_affinity(session):
+    session.execute("CREATE TABLE T (B BINARY, S STRING, N NUMBER(10,2), V VARIANT)")
+    session.execute(
+        "INSERT INTO T VALUES (?, ?, ?, ?)",
+        {
+            "1": {"type": "TEXT", "value": "0102"},
+            "2": {"type": "TEXT", "value": "0123"},
+            "3": {"type": "TEXT", "value": "1.50"},
+            "4": {"type": "TEXT", "value": "1"},
+        },
+    )
+    session.execute("INSERT INTO T SELECT TO_BINARY('0a0b', 'HEX'), '7', 2, PARSE_JSON('[1]')")
+    r = session.execute("SELECT B, S, N, V FROM T ORDER BY S")
+    tbl = decode_rowset(r.rowset_b64)
+    assert tbl.column("B").to_pylist() == [b"\x01\x02", b"\x0a\x0b"]
+    assert tbl.column("S").to_pylist() == ["0123", "7"]
+    assert tbl.column("N").to_pylist() == [Decimal("1.50"), Decimal("2.00")]
+    assert tbl.column("V").to_pylist() == ["1", "[1]"]
+    r = session.execute("DESC TABLE T")
+    assert decode_rowset(r.rowset_b64).column("type").to_pylist() == [
+        "BINARY(8388608)",
+        "VARCHAR(16777216)",
+        "NUMBER(10,2)",
+        "VARIANT",
+    ]
+
+
+def test_unexpected_server_error_is_a_snowflake_error_not_a_dropped_connection(server, monkeypatch):
+    from tests.fake_snowflake import sqlengine
+
+    token = _login(server)
+
+    def boom(self, sql, bindings=None):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(sqlengine.Session, "execute", boom)
+    body = _query(server, token, "SELECT 1")
+    assert body["success"] is False and "kaboom" in body["message"]
+    assert body["code"] == "000603" and body["data"]["sqlState"] == "XX000"
+
+
+def test_value_conversion_failure_is_a_snowflake_error(session):
+    from tests.fake_snowflake.sqlengine import SnowflakeError
+
+    session.execute("CREATE TABLE T (D DATE)")
+    session.execute("INSERT INTO T VALUES ('not a date')")
+    with pytest.raises(SnowflakeError) as e:
+        session.execute("SELECT D FROM T")
+    assert e.value.code == "100040" and "not a date" in str(e.value)

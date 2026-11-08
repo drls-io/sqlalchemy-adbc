@@ -54,6 +54,7 @@ _SYNONYMS: dict[str, str] = {
     "NCHAR VARYING": "TEXT",
     "BINARY": "BINARY",
     "VARBINARY": "BINARY",
+    "BINARY BLOB": "BINARY",  # the fake's own spelling, see sqlengine.sqlite_declared
     "BOOLEAN": "BOOLEAN",
     "DATE": "DATE",
     "TIME": "TIME",
@@ -87,6 +88,17 @@ class SnowflakeType:
     @property
     def logical_type(self) -> str:
         return _LOGICAL_NAMES.get(self.name, self.name)
+
+    def sqlite_declared(self) -> str:
+        """``declared()`` with SQLite's storage affinity steered: BLOB for BINARY.
+
+        SQLite derives affinity from the type name; the canonical Snowflake
+        spellings land on TEXT/REAL/NUMERIC as needed, except BINARY, whose
+        hex text would be coerced to a number under NUMERIC affinity.
+        """
+        if self.name == "BINARY":
+            return f"BINARY BLOB({self.length})"
+        return self.declared()
 
     def declared(self) -> str:
         if self.name == "NUMBER":

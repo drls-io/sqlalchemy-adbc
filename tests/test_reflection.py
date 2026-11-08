@@ -544,3 +544,37 @@ def test_dialect_methods_work_without_info_cache():
     with engine.connect() as conn:
         cols = engine.dialect.get_columns(conn, "users")
     assert [c["name"] for c in cols] == ["id", "email", "name", "created_at"]
+
+
+# ── table_type spellings differ per driver ───────────────────────────
+#
+# SQLite's driver reports ``table``/``view``/``index``; Snowflake's (and
+# BigQuery's) report ``BASE TABLE``/``VIEW``. Found by the fake Snowflake
+# endpoint: ``Inspector.get_table_names()`` was empty on Snowflake.
+
+
+def _tree_with_types(*entries: tuple[str, str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "catalog_name": "DB",
+            "catalog_db_schemas": [
+                {
+                    "db_schema_name": "S",
+                    "db_schema_tables": [
+                        {"table_name": name, "table_type": kind} for name, kind in entries
+                    ],
+                }
+            ],
+        }
+    ]
+
+
+def test_table_and_view_names_accept_snowflake_table_type_spellings():
+    from sqlalchemy_adbc.reflection import table_names_from_tree, view_names_from_tree
+
+    tree = _tree_with_types(
+        ("T1", "BASE TABLE"), ("V1", "VIEW"), ("t2", "table"), ("v2", "view"), ("ix", "index")
+    )
+    assert table_names_from_tree(tree, schema="S") == ["T1", "t2"]
+    assert view_names_from_tree(tree, schema="S") == ["V1", "v2"]
+    assert table_names_from_tree(tree, schema="OTHER") == []

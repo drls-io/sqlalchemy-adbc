@@ -215,6 +215,7 @@ def _rewrite_ddl(tokens: list[Token]) -> tuple[list[Token], list[str]]:
         out.append(Token("word", word))
         i += 1
 
+    out = _normalise_column_types(out)
     if or_replace:
         words = [t for t in out if t.kind in ("word", "quoted")]
         # CREATE <TABLE|VIEW> [IF NOT EXISTS] <name>
@@ -226,6 +227,88 @@ def _rewrite_ddl(tokens: list[Token]) -> tuple[list[Token], list[str]]:
             if name_idx < len(words):
                 pre.append(f"DROP {obj} IF EXISTS {words[name_idx].text}")
     return out, pre
+
+
+_COLUMN_CONSTRAINT_WORDS = {
+    "NOT",
+    "NULL",
+    "DEFAULT",
+    "PRIMARY",
+    "UNIQUE",
+    "REFERENCES",
+    "CHECK",
+    "COLLATE",
+    "CONSTRAINT",
+    "GENERATED",
+    "AS",
+    "WITH",
+    "MASKING",
+    "TAG",
+    "INCREMENT",
+}
+_TABLE_CONSTRAINT_WORDS = {"CONSTRAINT", "PRIMARY", "UNIQUE", "FOREIGN", "CHECK"}
+
+
+def _normalise_column_types(tokens: list[Token]) -> list[Token]:
+    """In ``CREATE TABLE``, rewrite each column's declared type to Snowflake's
+    canonical spelling (what ``DESC TABLE`` shows) in the form that gives SQLite
+    the right storage affinity."""
+    sig = [i for i, t in enumerate(tokens) if t.kind not in ("space", "comment")]
+    words = [tokens[i].upper for i in sig[:2]]
+    if words != ["CREATE", "TABLE"]:
+        return tokens
+    try:
+        open_idx = next(i for i in sig if tokens[i].text == "(")
+    except StopIteration:
+        return tokens
+    close_idx = _skip_parens(tokens, open_idx) - 1
+    # Split the column list at top-level commas.
+    items: list[list[int]] = [[]]
+    depth = 0
+    for i in range(open_idx + 1, close_idx):
+        t = tokens[i]
+        if t.text == "(":
+            depth += 1
+        elif t.text == ")":
+            depth -= 1
+        if depth == 0 and t.text == ",":
+            items.append([])
+            continue
+        items[-1].append(i)
+    replacements: dict[int, str] = {}
+    removed: set[int] = set()
+    for item in items:
+        sig_item = [i for i in item if tokens[i].kind not in ("space", "comment")]
+        if len(sig_item) < 2 or tokens[sig_item[0]].kind not in ("word", "quoted"):
+            continue
+        if tokens[sig_item[0]].upper in _TABLE_CONSTRAINT_WORDS:
+            continue
+        type_idx: list[int] = []
+        k = 1
+        while k < len(sig_item):
+            tok = tokens[sig_item[k]]
+            if tok.kind == "word" and tok.upper in _COLUMN_CONSTRAINT_WORDS:
+                break
+            if tok.text == "(":
+                end = _skip_parens(tokens, sig_item[k])
+                type_idx.extend(i for i in sig_item[k:] if i < end)
+                k = next((n for n, i in enumerate(sig_item) if i >= end), len(sig_item))
+                continue
+            type_idx.append(sig_item[k])
+            k += 1
+        if not type_idx:
+            continue
+        declared = "".join(tokens[i].text for i in range(type_idx[0], type_idx[-1] + 1))
+        replacements[type_idx[0]] = parse_type(declared).sqlite_declared()
+        removed.update(type_idx[1:])
+        removed.update(i for i in range(type_idx[0], type_idx[-1] + 1) if tokens[i].kind == "space")
+    out: list[Token] = []
+    for i, t in enumerate(tokens):
+        if i in replacements:
+            out.append(Token("word", replacements[i]))
+        elif i not in removed:
+            out.append(t)
+    return out
 
 
 def _render(tokens: list[Token]) -> str:
@@ -351,6 +434,14 @@ class SnowflakeError(Exception):
 
 @dataclass
 class Result:
+    """One query answer.
+
+    ``rowset_json`` set means the answer goes on the wire in Snowflake's JSON
+    result format, which is what Snowflake uses for DML and DDL. The driver
+    treats a non-empty ``rowset`` as "read JSON, not Arrow", so the server
+    never sends both; ``rowset_b64`` is still filled for the fake's own tests.
+    """
+
     rowtype: list[dict[str, Any]]
     rowset_b64: str
     statement_type_id: int
@@ -360,7 +451,7 @@ class Result:
 
 def status_result(message: str, statement_type_id: int = STATEMENT_DDL) -> Result:
     rowtype, b64 = encode_rowset([("status", _STATUS_TYPE, [message])], nullable=[False])
-    return Result(rowtype, b64, statement_type_id, 1)
+    return Result(rowtype, b64, statement_type_id, 1, rowset_json=[[message]])
 
 
 def dml_result(label: str, count: int, statement_type_id: int) -> Result:
@@ -568,7 +659,10 @@ class Session:
             info = found if found is not None else (infer_type(columns[i]), True)
             typed.append((name, info[0], columns[i]))
             nullable.append(info[1])
-        rowtype, b64 = encode_rowset(typed, nullable=nullable)
+        try:
+            rowtype, b64 = encode_rowset(typed, nullable=nullable)
+        except (ValueError, TypeError, ArithmeticError) as exc:
+            raise SnowflakeError(f"Data conversion error: {exc}", "100040", "22007") from None
         return Result(rowtype, b64, STATEMENT_SELECT, len(rows))
 
 
