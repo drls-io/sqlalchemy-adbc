@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-08
+
+Flight SQL, the backend this package is about, is now integration-tested in
+CI against a real server (GizmoSQL), so three of the five drivers run end to
+end on every change. Python 3.11 support is dropped: the floor is 3.12.
+
 ### Removed
 
 - **Python 3.11 support.** `requires-python` is now `>=3.12` and CI, tox,
