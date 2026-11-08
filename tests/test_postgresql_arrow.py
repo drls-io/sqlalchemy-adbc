@@ -88,7 +88,9 @@ def test_ingest_create_then_append_and_rollback(engine: sa.Engine) -> None:
 
 def test_append_with_mismatched_schema_raises_driver_error(engine: sa.Engine) -> None:
     # PostgreSQL's ingest uses binary COPY: an int64 column cannot land in an
-    # INTEGER column. The driver's error propagates unwrapped.
+    # INTEGER column. The driver's error propagates unwrapped; its class differs
+    # by driver version (ProgrammingError on 1.11, DataError on 1.13), so match
+    # the DBAPI base class and the message.
     import adbc_driver_manager
 
     name = _name()
@@ -96,7 +98,7 @@ def test_append_with_mismatched_schema_raises_driver_error(engine: sa.Engine) ->
     t.metadata.create_all(engine)
     try:
         with engine.connect() as c:
-            with pytest.raises(adbc_driver_manager.ProgrammingError, match="binary data format"):
+            with pytest.raises(adbc_driver_manager.Error, match="binary data format"):
                 ingest_arrow(c, name, pa.table({"id": pa.array([1], pa.int64())}))
             c.rollback()
             assert fetch_arrow_table(c, sa.select(sa.func.count()).select_from(t)).column(
