@@ -104,7 +104,16 @@ def main() -> None:
                 "Polars: `pl.from_arrow(fetch_arrow_table(...))`",
                 lambda m: m.from_arrow(fetch_arrow_table(conn, stmt)),
             ),
-            ("pandas", "pandas: `pd.read_sql(select, conn)`", lambda m: m.read_sql(stmt, conn)),
+            (
+                "pandas",
+                "pandas via Arrow: `fetch_arrow_table(...).to_pandas()`",
+                lambda m: fetch_arrow_table(conn, stmt).to_pandas(),
+            ),
+            (
+                "pandas",
+                "pandas via rows: `pd.read_sql(select, conn)`",
+                lambda m: m.read_sql(stmt, conn),
+            ),
         ):
             try:
                 mod = importlib.import_module(module)

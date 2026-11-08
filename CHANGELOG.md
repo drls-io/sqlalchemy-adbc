@@ -6,6 +6,13 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-08
+
+The Arrow-native path: `fetch_arrow_table`, `open_arrow_batch_reader` and
+`ingest_arrow` run on the ADBC cursor behind a SQLAlchemy connection, inside
+its transaction, so Arrow, Polars and pandas users skip the row round trip
+(about 7× faster than the row path on the bundled benchmark).
+
 ### Added
 
 - **Arrow-native helpers** — `sqlalchemy_adbc.arrow` (also exported from the
