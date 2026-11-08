@@ -6,6 +6,13 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-08
+
+Snowflake is now tested end to end in CI through a fake endpoint that drives the
+real driver, which surfaced and fixed five dialect bugs, including OAuth2
+tokens that were never refreshed and a Snowflake OAuth2 path that could not
+connect at all. Python 3.10 support is dropped and 3.14 joins the matrix.
+
 ### Removed
 
 - **Python 3.10 support.** 3.10 reached end of life in October 2026, and
@@ -57,7 +64,6 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   procedure now matches `publish.yml` (changelog section, tag on `main`,
   GitHub Release created by the workflow). The 0.5.0 changelog entry named a
   config file `sqlalchemy-adbc.toml` that never existed; corrected.
-
 
 ## [0.5.0] — 2026-11-07
 
