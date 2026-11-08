@@ -122,6 +122,19 @@ emits a `DeprecationWarning` and will be removed in 1.0.
 | Snowflake    | `snowflake+adbc://user:pass@account/db/schema?warehouse=W` |
 | BigQuery     | `bigquery+adbc:///my-project?dataset=my_dataset`           |
 
+### BigQuery query-string options
+
+The database segment is the GCP project. Credentials default to Application
+Default Credentials (`gcloud auth application-default login` or a service
+account on the VM).
+
+| Key                   | Meaning                                                               |
+|-----------------------|-----------------------------------------------------------------------|
+| `dataset`             | Default dataset for unqualified table names (required to run queries) |
+| `location`            | Job location, e.g. `US` or `europe-west2`                             |
+| `credentials_path`    | Service-account JSON file; switches auth to that file                 |
+| `adbc.bigquery.sql.*` | Any driver option, passed through as is; wins over the short keys     |
+
 ### Flight SQL query-string options
 
 | Key                 | Meaning                                            |

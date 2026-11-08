@@ -6,6 +6,15 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **BigQuery URL options.** `?dataset=`, `?location=` and `?credentials_path=`
+  were passed to the driver verbatim, which rejected them ("Unknown database
+  option 'dataset'"), so the documented URL never connected. They now map to
+  `adbc.bigquery.sql.dataset_id`, `adbc.bigquery.sql.location` and the
+  JSON-credential-file auth type; any `adbc.bigquery.sql.*` key still passes
+  through and wins. Verified against a live project.
+
 ## [0.8.0] — 2026-11-08
 
 The Arrow-native path: `fetch_arrow_table`, `open_arrow_batch_reader` and
