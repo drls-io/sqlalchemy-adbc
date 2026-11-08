@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy.engine import reflection as sa_reflection
 from sqlalchemy.engine.default import DefaultDialect, DefaultExecutionContext
 from sqlalchemy.engine.interfaces import (
+    ExecutionContext,
     ReflectedColumn,
     ReflectedForeignKeyConstraint,
     ReflectedIndex,
@@ -63,6 +64,16 @@ class ColumnwiseCursor:
 
     def executemany(self, operation: Any, seq_of_parameters: Any) -> Any:
         self._reset()
+        # Dialects may hand over an Arrow record batch (Snowflake's typed
+        # binds); only plain sequences of parameter sets are inspected here.
+        if isinstance(seq_of_parameters, (list, tuple)) and seq_of_parameters:
+            if all(not p for p in seq_of_parameters):
+                # ``INSERT INTO t DEFAULT VALUES`` for N empty parameter sets:
+                # the driver binds an empty batch and inserts nothing, so run
+                # the statement once per set instead.
+                for _ in seq_of_parameters:
+                    self._cursor.execute(operation)
+                return None
         return self._cursor.executemany(operation, seq_of_parameters)
 
     def _fill(self, want: int | None) -> None:
@@ -110,7 +121,10 @@ class ColumnwiseCursor:
 
     @property
     def description(self) -> Sequence[Any] | None:
-        return self._cursor.description
+        # The ADBC cursor reports ``[]`` for a statement without result columns
+        # (INSERT, DDL); DBAPI says None, and SQLAlchemy's ``returns_rows``
+        # keys on that.
+        return self._cursor.description or None
 
     @property
     def rowcount(self) -> int:
@@ -131,36 +145,28 @@ class ADBCExecutionContext(DefaultExecutionContext):
         return ColumnwiseCursor(self._dbapi_connection.cursor())
 
 
-class ADBCDialect(DefaultDialect):
-    """Base class for SQLAlchemy dialects backed by ADBC drivers.
+class ADBCConnectionMixin(DefaultDialect):
+    """The ADBC connection layer, independent of any SQL dialect.
 
-    This class is registered as the plain ``adbc://`` scheme. In practice
-    callers should use a backend-specific variant like ``flightsql+adbc://``;
-    the plain scheme requires ``adbc_driver_name`` in the URL query string.
-    The pre-0.4 ``adbc+<backend>://`` spellings remain registered as
-    deprecated aliases.
+    Carries everything needed to open and execute on an ADBC DBAPI
+    connection: locating the driver module, translating a SQLAlchemy URL into
+    ``connect()`` arguments, minting per-connection credentials, the
+    column-wise cursor, pinging. It is mixed into :class:`ADBCDialect` (the
+    generic dialect with ``GetObjects`` reflection) and into SQLAlchemy's own
+    dialects where one exists for the backend, e.g.
+    ``class ADBCSQLiteDialect(ADBCConnectionMixin, SQLiteDialect)``, which
+    keeps that dialect's SQL, DDL, types and reflection and only swaps the
+    wire path for ADBC.
     """
 
-    # SQLAlchemy convention: `name` = backend identity (used by
-    # Alembic's DDL impl registry, by reflection defaults, etc.);
-    # `driver` = driver identity (the wire path).
-    # Base class has no backend — subclasses override `name` to the
-    # backend they target ("sqlite", "postgresql", ...).
-    name = "adbc"
     driver = "adbc"
-    execution_ctx_cls = ADBCExecutionContext
+    execution_ctx_cls: type[ExecutionContext] = ADBCExecutionContext
     supports_statement_cache = True
+    # ADBC cursors report -1 for the row count of a query-path statement
+    # and have no ``lastrowid``; SQLAlchemy uses RETURNING where available.
     supports_sane_rowcount = False
     supports_sane_multi_rowcount = False
-
-    # ADBC drivers speak Python DBAPI, so the SQL dialect defaults are
-    # close to "generic SQL-92". Subclasses override as needed.
-    paramstyle = "qmark"
-
-    ischema_names: dict[str, Any] | None = None
-    """Per-backend type registry merged over the generic ``xdbc_type_name``
-    map during column reflection; see :func:`reflection.adbc_type_to_sqla`.
-    """
+    postfetch_lastrowid = False
 
     _connect_hook: Callable[[dict[str, Any]], None] | None = None
     """Set by ``build_connect_args`` when a credential must be minted per
@@ -202,12 +208,6 @@ class ADBCDialect(DefaultDialect):
 
         Subclasses should override ``build_connect_args`` instead of this.
         """
-        from sqlalchemy_adbc.proxy import ensure_proxy_env_once
-
-        # Export [proxy] from the local config into the environment for the
-        # package's own HTTP calls (OAuth2 token requests). The Go drivers
-        # read the environment they were started with; see proxy.py.
-        ensure_proxy_env_once()
         self._connect_hook = None
         if url.drivername.startswith("adbc+"):
             backend = url.get_driver_name()
@@ -263,6 +263,44 @@ class ADBCDialect(DefaultDialect):
             cursor.close()
         return True
 
+    def _adbc_connection(self, connection: Any) -> Any:
+        """Unwrap SQLAlchemy Connection → raw ADBC DBAPI connection."""
+        raw = getattr(connection, "connection", connection)
+        # SQLAlchemy's pool proxy exposes the underlying DBAPI as
+        # `.driver_connection` on 2.0+; older code used `.connection`.
+        # Falling back to `raw` itself handles cases where the caller
+        # already passed the DBAPI connection directly.
+        return getattr(raw, "driver_connection", None) or getattr(raw, "connection", raw)
+
+
+class ADBCDialect(ADBCConnectionMixin):
+    """Generic SQLAlchemy dialect for any ADBC driver.
+
+    This class is registered as the plain ``adbc://`` scheme. In practice
+    callers should use a backend-specific variant like ``flightsql+adbc://``;
+    the plain scheme requires ``adbc_driver_name`` in the URL query string.
+    The pre-0.4 ``adbc+<backend>://`` spellings remain registered as
+    deprecated aliases. Reflection runs on ADBC's ``GetObjects`` so it works
+    against any driver; backends SQLAlchemy already knows (SQLite) instead
+    mix :class:`ADBCConnectionMixin` into SQLAlchemy's dialect.
+    """
+
+    # SQLAlchemy convention: `name` = backend identity (used by
+    # Alembic's DDL impl registry, by reflection defaults, etc.);
+    # `driver` = driver identity (the wire path).
+    # Base class has no backend — subclasses override `name` to the
+    # backend they target ("postgresql", "snowflake", ...).
+    name = "adbc"
+
+    # ADBC drivers speak Python DBAPI, so the SQL dialect defaults are
+    # close to "generic SQL-92". Subclasses override as needed.
+    paramstyle = "qmark"
+
+    ischema_names: dict[str, Any] | None = None
+    """Per-backend type registry merged over the generic ``xdbc_type_name``
+    map during column reflection; see :func:`reflection.adbc_type_to_sqla`.
+    """
+
     # ── Reflection (Issue #1) ────────────────────────────────────────
     #
     # SQLAlchemy's Inspector routes to these methods. Each one receives
@@ -281,15 +319,6 @@ class ADBCDialect(DefaultDialect):
     # - `table_name_filter` and `db_schema_filter` narrow the ADBC
     #   query, so even large catalogs don't materialize every table
     #   just to inspect one.
-
-    def _adbc_connection(self, connection: Any) -> Any:
-        """Unwrap SQLAlchemy Connection → raw ADBC DBAPI connection."""
-        raw = getattr(connection, "connection", connection)
-        # SQLAlchemy's pool proxy exposes the underlying DBAPI as
-        # `.driver_connection` on 2.0+; older code used `.connection`.
-        # Falling back to `raw` itself handles cases where the caller
-        # already passed the DBAPI connection directly.
-        return getattr(raw, "driver_connection", None) or getattr(raw, "connection", raw)
 
     @sa_reflection.cache
     def _tree(

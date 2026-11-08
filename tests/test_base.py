@@ -79,3 +79,29 @@ def test_dialect_name_and_driver_attrs():
 def test_supports_statement_cache_true():
     """Required to silence SQLAlchemy's caching-disabled warning."""
     assert ADBCDialect.supports_statement_cache is True
+
+
+def test_connection_mixin_is_reusable_with_another_base():
+    """The ADBC connection plumbing must be mixable into one of SQLAlchemy's own
+    dialects (the SQLite dialect uses it that way), independent of the generic
+    GetObjects reflection that ADBCDialect adds on top."""
+    from sqlalchemy.engine.default import DefaultDialect
+
+    from sqlalchemy_adbc.base import ADBCConnectionMixin
+
+    class X(ADBCConnectionMixin, DefaultDialect):
+        name = "x"
+        driver = "adbc"
+        driver_module = "adbc_driver_sqlite.dbapi"
+
+    assert hasattr(X.import_dbapi(), "connect")
+    x = X()
+    assert x.postfetch_lastrowid is False
+    assert x.supports_sane_rowcount is False
+    assert x._connect_hook is None
+    assert ADBCConnectionMixin in ADBCDialect.__mro__
+    # Reflection belongs to ADBCDialect, not the mixin.
+    assert "get_columns" not in ADBCConnectionMixin.__dict__
+    assert "get_columns" in ADBCDialect.__dict__
+    args, kw = x.create_connect_args(make_url("sqlite+adbc:///:memory:?a=1"))
+    assert args == [":memory:"] and kw == {"db_kwargs": {"a": "1"}}

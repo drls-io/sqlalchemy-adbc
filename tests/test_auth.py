@@ -9,7 +9,6 @@ from sqlalchemy_adbc.auth import AuthSettings, require, settings_from_query
 from sqlalchemy_adbc.config import Config
 
 CFG = Config(
-    {},
     {
         "flight": {
             "type": "oauth2",
@@ -61,7 +60,7 @@ def test_env_ref_missing_names_key():
 
 
 def test_no_auth_keys_gives_type_none():
-    assert settings_from_query({"tls": "false"}, Config({}, {}, None)).type is None
+    assert settings_from_query({"tls": "false"}, Config({}, None)).type is None
 
 
 # Threat model: the URL author (a Superset DB admin) is less trusted than the

@@ -1,4 +1,4 @@
-"""Local configuration file for proxies and authentication profiles.
+"""Local configuration file for authentication profiles.
 
 Discovery order (first hit wins; absence is normal and silent):
 
@@ -6,16 +6,11 @@ Discovery order (first hit wins; absence is normal and silent):
 2. ``~/.config/sqlalchemy-adbc/config.toml``
 
 The working directory is deliberately not searched: a file dropped into a
-cloned repository could otherwise redirect traffic through a hostile proxy
-or point OAuth2 at a token endpoint that harvests ``env:`` secrets. For the
-same reason the file must be owned by the current user and not writable by
-group or others.
+cloned repository could otherwise point OAuth2 at a token endpoint that
+harvests ``env:`` secrets. For the same reason the file must be owned by the
+current user and not writable by group or others.
 
 Shape::
-
-    [proxy]
-    https_proxy = "http://proxy.corp.example:3128"
-    no_proxy = "localhost,.corp.example"
 
     [auth.<profile>]
     type = "oauth2"          # bearer | basic | negotiate | oauth2
@@ -25,12 +20,18 @@ Shape::
 
 Any string value may be ``env:NAME`` to defer to an environment variable,
 so secrets stay out of files and URLs.
+
+A ``[proxy]`` section (0.5.0 to 0.8.0) is ignored with a warning: the
+Go-based drivers read ``HTTP_PROXY`` / ``HTTPS_PROXY`` / ``NO_PROXY`` from
+the environment the process was started with, so set them in the shell or
+launcher.
 """
 
 from __future__ import annotations
 
 import os
 import tomllib
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,12 +45,11 @@ USER_CONFIG = Path("~/.config/sqlalchemy-adbc/config.toml")
 
 @dataclass(frozen=True)
 class Config:
-    proxy: dict[str, str]
     auth_profiles: dict[str, dict[str, str]]
     path: Path | None
 
 
-EMPTY_CONFIG = Config({}, {}, None)
+EMPTY_CONFIG = Config({}, None)
 
 
 def find_config_path(
@@ -99,12 +99,19 @@ def load_config(path: Path | None = None, *, env: Mapping[str, str] = os.environ
             data = tomllib.load(fh)
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ArgumentError(f"cannot read config {path}: {exc}") from exc
-    proxy = _str_table(data.get("proxy", {}), "proxy", path)
+    if data.get("proxy"):
+        warnings.warn(
+            f"{path}: the [proxy] section is ignored since 0.9.0. The Go-based ADBC "
+            "drivers only read HTTP_PROXY, HTTPS_PROXY and NO_PROXY from the environment "
+            "the process was started with; set them in the shell or launcher.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     auth_raw = data.get("auth", {})
     if not isinstance(auth_raw, dict):
         raise ArgumentError(f"cannot read config {path}: [auth] must hold profile tables")
     profiles = {str(name): _str_table(tbl, f"auth.{name}", path) for name, tbl in auth_raw.items()}
-    return Config(proxy, profiles, path)
+    return Config(profiles, path)
 
 
 def resolve_env_ref(value: str, *, key: str, env: Mapping[str, str] = os.environ) -> str:
