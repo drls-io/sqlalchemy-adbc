@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy.engine import reflection as sa_reflection
 from sqlalchemy.engine.default import DefaultDialect, DefaultExecutionContext
 from sqlalchemy.engine.interfaces import (
+    ExecutionContext,
     ReflectedColumn,
     ReflectedForeignKeyConstraint,
     ReflectedIndex,
@@ -146,7 +147,7 @@ class ADBCConnectionMixin(DefaultDialect):
     """
 
     driver = "adbc"
-    execution_ctx_cls = ADBCExecutionContext
+    execution_ctx_cls: type[ExecutionContext] = ADBCExecutionContext
     supports_statement_cache = True
     # ADBC cursors report -1 for the row count of a query-path statement
     # and have no ``lastrowid``; SQLAlchemy uses RETURNING where available.
