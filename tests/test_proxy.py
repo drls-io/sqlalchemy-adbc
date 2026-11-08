@@ -1,95 +1,49 @@
-"""Proxy settings: exported from config into the environment the drivers read."""
+"""The ``[proxy]`` config section is retired.
+
+The Go-based drivers (Flight SQL, Snowflake, BigQuery) read ``HTTP_PROXY`` /
+``HTTPS_PROXY`` / ``NO_PROXY`` from the environment the process was started
+with; nothing written from Python reaches them. So the export this package
+did in 0.5.0 to 0.8.0 could never route the drivers, and only ever served
+its own OAuth2 token request. It is gone: a ``[proxy]`` section is ignored
+with a warning, and the environment is left alone.
+"""
 
 from __future__ import annotations
 
+import importlib.util
 import os
 
+import pytest
 import sqlalchemy as sa
 
-from sqlalchemy_adbc.config import Config
-from sqlalchemy_adbc.proxy import apply_proxy_env
-
-CFG = Config(
-    {"https_proxy": "http://p:3128", "http_proxy": "http://p:3128", "no_proxy": "localhost"},
-    {},
-    None,
-)
+from sqlalchemy_adbc.config import load_config
 
 
-def test_exports_both_spellings_when_unset():
-    env: dict[str, str] = {}
-    written = apply_proxy_env(CFG, env)
-    assert env == {
-        "HTTPS_PROXY": "http://p:3128",
-        "https_proxy": "http://p:3128",
-        "HTTP_PROXY": "http://p:3128",
-        "http_proxy": "http://p:3128",
-        "NO_PROXY": "localhost",
-        "no_proxy": "localhost",
-    }
-    assert set(written) == set(env)
+def test_proxy_module_is_gone():
+    assert importlib.util.find_spec("sqlalchemy_adbc.proxy") is None
 
 
-def test_never_overwrites_existing_variables():  # Review Focus 3
-    env = {"NO_PROXY": "mine"}
-    apply_proxy_env(CFG, env)
-    assert env["NO_PROXY"] == "mine" and env["no_proxy"] == "mine"
-    assert env["HTTPS_PROXY"] == "http://p:3128"
+def test_proxy_section_is_ignored_with_a_warning(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('[proxy]\nhttps_proxy = "http://cfg:1"\n\n[auth.x]\ntype = "basic"\n')
+    p.chmod(0o600)
+    with pytest.warns(DeprecationWarning, match="HTTPS_PROXY"):
+        cfg = load_config(p)
+    assert cfg.auth_profiles == {"x": {"type": "basic"}}
+    assert not hasattr(cfg, "proxy") or cfg.proxy == {}
 
 
-def test_lowercase_existing_is_honoured_too():
-    env = {"https_proxy": "http://user:7"}
-    apply_proxy_env(CFG, env)
-    assert env["https_proxy"] == "http://user:7" and env["HTTPS_PROXY"] == "http://user:7"
-
-
-def test_noop_without_proxy_section():
-    env: dict[str, str] = {}
-    assert apply_proxy_env(Config({}, {}, None), env) == {} and env == {}
-
-
-def test_dialect_applies_once(monkeypatch, tmp_path):
-    from sqlalchemy_adbc import proxy
-
-    p = tmp_path / "sqlalchemy-adbc.toml"
+def test_connecting_never_writes_proxy_variables(monkeypatch, tmp_path):
+    p = tmp_path / "config.toml"
     p.write_text('[proxy]\nhttps_proxy = "http://cfg:1"\n')
+    p.chmod(0o600)
     monkeypatch.setenv("SQLALCHEMY_ADBC_CONFIG", str(p))
-    for k in ("HTTPS_PROXY", "https_proxy"):
+    for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
         monkeypatch.delenv(k, raising=False)
-    proxy._reset_for_tests()
     e = sa.create_engine("sqlite+adbc:///:memory:")
+    # Connecting no longer reads the config file at all (only auth profiles
+    # do, on the dialects that use them), so nothing is exported.
     with e.connect() as c:
-        c.exec_driver_sql("SELECT 1")
-    assert os.environ["HTTPS_PROXY"] == "http://cfg:1"
-    # Second engine: config no longer consulted (flag set), env already present.
-    p.write_text('[proxy]\nhttps_proxy = "http://changed:2"\n')
-    sa.create_engine("sqlite+adbc:///:memory:").connect().close()
-    assert os.environ["HTTPS_PROXY"] == "http://cfg:1"
-
-
-def test_logs_which_file_set_the_proxy(caplog):
-    import logging
-    from pathlib import Path
-
-    cfg = Config(
-        {"https_proxy": "http://p:1"}, {}, Path("/home/me/.config/sqlalchemy-adbc/config.toml")
-    )
-    with caplog.at_level(logging.INFO, logger="sqlalchemy_adbc.proxy"):
-        apply_proxy_env(cfg, {})
-    assert "config.toml" in caplog.text and "HTTPS_PROXY" in caplog.text
-
-
-def test_warns_that_go_drivers_only_see_the_startup_environment(caplog):
-    # Found with the fake Snowflake endpoint: the Go runtime inside the
-    # drivers snapshots the environment at process start, so an export made
-    # here reaches Python HTTP clients (the OAuth2 token request) but not the
-    # drivers. Say so once, at WARNING, naming the file.
-    import logging
-    from pathlib import Path
-
-    cfg = Config({"https_proxy": "http://p:1"}, {}, Path("/etc/sqlalchemy-adbc/config.toml"))
-    with caplog.at_level(logging.WARNING, logger="sqlalchemy_adbc.proxy"):
-        apply_proxy_env(cfg, {})
-    [record] = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert "started" in record.getMessage() and "config.toml" in record.getMessage()
-    assert "HTTPS_PROXY" in record.getMessage()
+        assert c.exec_driver_sql("SELECT 1").scalar() == 1
+    assert "HTTPS_PROXY" not in os.environ and "https_proxy" not in os.environ
+    e.dispose()
