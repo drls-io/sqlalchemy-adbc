@@ -16,6 +16,53 @@ reflects on every driver version.
 
 ### Added
 
+- **BigQuery dialect speaks GoogleSQL.** Identifiers quote with backticks
+  (`"..."` is a string literal in BigQuery, so any reserved-word or mixed-case
+  name used to be a syntax error), with backslash escaping of backticks inside
+  names and of quotes inside rendered string literals; DDL emits `STRING(n)`, `INT64`, `FLOAT64`,
+  `BOOL`, `NUMERIC(p, s)`, `BYTES`, `DATETIME`, `TIMESTAMP`, `JSON` instead of
+  `VARCHAR` / `BLOB` / `FLOAT`, which BigQuery rejects; primary and foreign keys
+  render `NOT ENFORCED` (the only kind BigQuery has) and unique constraints are
+  omitted. Native booleans (`WHERE flag`, not `flag = 1`), exact `NUMERIC`
+  decimals, multi-row `VALUES` inserts via insertmanyvalues, and `LargeBinary`
+  binds (the driver module lacks `Binary`). `DateTime` binds render
+  `CAST(? AS DATETIME)`: the driver sends a naive datetime as a `TIMESTAMP`
+  parameter, which BigQuery refuses to store in a `DATETIME` column.
+- **BigQuery reflection types.** `STRING(n)`, `BYTES`, `BIGNUMERIC`,
+  `NUMERIC(p, s)` with precision and scale, `INTEGER` → `BigInteger`, and
+  `TIMESTAMP` → `TIMESTAMP(timezone=True)` (a UTC instant; `DATETIME` stays the
+  naive `DateTime`). Previously `STRING` and `BYTES` reflected as `NullType`.
+  ARRAY, STRUCT and GEOGRAPHY still reflect as `NullType`.
+- **Alembic on BigQuery.** Alembic ships no impl for the `bigquery` dialect
+  name, so `MigrationContext.configure` raised `KeyError`; importing
+  `sqlalchemy_adbc.bigquery` now registers one (verified: autogenerate against
+  a live dataset with `compare_type=True` reports only the real diff).
+- **Live BigQuery tests** (`tests/test_bigquery_e2e.py`), run when
+  `DRLS_BIGQUERY_URL` is set: `create_all`, Core insert/select/update/delete
+  round trips for every scalar type, boolean filters, reserved-word columns,
+  `IN` lists, LIMIT/OFFSET and reflection. `executemany` runs one statement per
+  parameter set because the driver's own `executemany` returns before every
+  job has finished.
+
+### Fixed
+
+- **BigQuery URL options.** `?dataset=`, `?location=` and `?credentials_path=`
+  were passed to the driver verbatim, which rejected them ("Unknown database
+  option 'dataset'"), so the documented URL never connected. They now map to
+  `adbc.bigquery.sql.dataset_id`, `adbc.bigquery.sql.location` and the
+  JSON-credential-file auth type; any `adbc.bigquery.sql.*` key still passes
+  through and wins. Verified against a live project.
+### Removed
+
+- **The `[proxy]` config section.** It exported `HTTP_PROXY` / `HTTPS_PROXY` /
+  `NO_PROXY` into the environment on the first connect, but the Go-based
+  drivers (Flight SQL, Snowflake, BigQuery) only read the environment the
+  process was started with, so it never routed them (verified on macOS and
+  Linux, see 0.6.0). The section is now ignored with a `DeprecationWarning`;
+  set the variables in the shell or launcher. `sqlalchemy_adbc.proxy` is gone
+  and `Config` has no `proxy` field.
+### Added
+
 - **SQLAlchemy dialect compliance suite in CI** — `suite/` runs SQLAlchemy's
   own dialect test suite against `sqlite+adbc` on every change (SQLAlchemy
   2.0: 903 passed, 446 skipped; 2.1: 1022 passed, 400 skipped; 0 failed on

@@ -122,6 +122,19 @@ emits a `DeprecationWarning` and will be removed in 1.0.
 | Snowflake    | `snowflake+adbc://user:pass@account/db/schema?warehouse=W` |
 | BigQuery     | `bigquery+adbc:///my-project?dataset=my_dataset`           |
 
+### BigQuery query-string options
+
+The database segment is the GCP project. Credentials default to Application
+Default Credentials (`gcloud auth application-default login` or a service
+account on the VM).
+
+| Key                   | Meaning                                                               |
+|-----------------------|-----------------------------------------------------------------------|
+| `dataset`             | Default dataset for unqualified table names (required to run queries) |
+| `location`            | Job location, e.g. `US` or `europe-west2`                             |
+| `credentials_path`    | Service-account JSON file; switches auth to that file                 |
+| `adbc.bigquery.sql.*` | Any driver option, passed through as is; wins over the short keys     |
+
 ### Flight SQL query-string options
 
 | Key                 | Meaning                                            |
@@ -143,15 +156,13 @@ through the Go driver.
 
 The Flight SQL, Snowflake and BigQuery drivers are Go libraries that read
 `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case) from the process
-environment. **Set them in the shell or launcher that starts Python.** The
-Go runtime snapshots the environment at process start, so a variable written
+environment. Set them in the shell or launcher that starts Python: the Go
+runtime snapshots the environment at process start, so a variable written
 later from Python, by this package or anything else, is not seen by the
-drivers. A `[proxy]` section in the local config file (below) is still
-exported into the environment on the first connect: it serves this package's
-own HTTP calls (the OAuth2 token request) and anything in the process that
-reads the environment at request time, and a WARNING is logged so the gap
-is visible. A variable you already set always wins. PostgreSQL (libpq) and
-SQLite have no HTTP proxy concept.
+drivers. Earlier versions exported a `[proxy]` section of the config file
+into the environment; it could never reach the drivers and is ignored with
+a warning since 0.9.0. PostgreSQL (libpq) and SQLite have no HTTP proxy
+concept.
 
 ## Authentication
 
@@ -180,10 +191,6 @@ it must be owned by you and not group- or world-writable, and the working
 directory is deliberately never searched. Any value may be `env:NAME`.
 
 ```toml
-[proxy]
-https_proxy = "http://proxy.corp.example:3128"
-no_proxy    = "localhost,127.0.0.1,.corp.example"
-
 [auth.drls-flight]
 type = "oauth2"
 token_url = "https://keycloak.example/realms/drls/protocol/openid-connect/token"
@@ -231,6 +238,10 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   backend DDL impls via standard dialect-name lookup
 - URL forms for Flight SQL, PostgreSQL, SQLite, Snowflake, BigQuery
   with correct special-character escaping in passwords
+- BigQuery as GoogleSQL: backtick quoting, `STRING` / `INT64` / `FLOAT64` /
+  `BOOL` / `NUMERIC` / `BYTES` / `DATETIME` / `TIMESTAMP` DDL, `NOT ENFORCED`
+  primary and foreign keys, native booleans, multi-row inserts, and typed
+  reflection of every scalar type (`TIMESTAMP` as `TIMESTAMP(timezone=True)`)
 - PostgreSQL typed decorators: JSONB / JSON / UUID / INET / CIDR /
   MACADDR, and all range and multirange types (`int4range` …
   `tstzmultirange`) plus `hstore`, returning SQLAlchemy's own
@@ -247,8 +258,9 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
 - **Drivers exercised in CI** — SQLite fully, PostgreSQL and Flight SQL
   (GizmoSQL) via service containers, Snowflake through the real driver
-  against the fake endpoint under `tests/fake_snowflake/`. BigQuery has URL
-  translation tests only
+  against the fake endpoint under `tests/fake_snowflake/`. BigQuery has
+  compile-only tests in CI; the live tests in `tests/test_bigquery_e2e.py`
+  run when `DRLS_BIGQUERY_URL` is set and need Google Cloud credentials
   ([#12](https://github.com/drls-io/sqlalchemy-adbc/issues/12))
 
 Tests run on Python 3.12–3.14 in CI, including PostgreSQL and Flight SQL
@@ -263,7 +275,7 @@ git clone https://github.com/drls-io/sqlalchemy-adbc
 cd sqlalchemy-adbc
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                 # unit tests + the fake Snowflake endpoint; live backends via DRLS_PG_URL / DRLS_FLIGHTSQL_URL / DRLS_SNOWFLAKE_URL
+pytest                 # unit tests + the fake Snowflake endpoint; live backends via DRLS_PG_URL / DRLS_FLIGHTSQL_URL / DRLS_SNOWFLAKE_URL / DRLS_BIGQUERY_URL
 ruff check src/ tests/ && ruff format --check src/ tests/
 mypy src tests
 tox                    # same gates across Python 3.12–3.14 × SQLAlchemy 2.0/2.1 (tox.ini)
