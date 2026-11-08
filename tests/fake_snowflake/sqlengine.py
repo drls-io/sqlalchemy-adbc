@@ -18,11 +18,24 @@ unaffected.
 
 from __future__ import annotations
 
+import base64
+import json
+import os
 import re
+import sqlite3
+import threading
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from tests.fake_snowflake.results import _to_bool
+from tests.fake_snowflake.results import (
+    MAX_BINARY,
+    MAX_TEXT,
+    SnowflakeType,
+    _to_bool,
+    encode_rowset,
+    infer_type,
+    parse_type,
+)
 
 TokenKind = Literal["word", "quoted", "string", "punct", "space", "comment"]
 
@@ -271,3 +284,412 @@ def coerce_bindings(bindings: dict[str, dict[str, Any]] | None) -> list[Any] | d
     if all(key.isdigit() for key in bindings):
         return [_coerce_value(bindings[key]) for key in sorted(bindings, key=int)]
     return {key: _coerce_value(b) for key, b in bindings.items()}
+
+
+# ── execution ────────────────────────────────────────────────────────
+
+STATEMENT_SELECT = 0x1000
+STATEMENT_INSERT = 0x3100
+STATEMENT_UPDATE = 0x3200
+STATEMENT_DELETE = 0x3300
+STATEMENT_DDL = 0x6000
+
+_STATUS_TYPE = SnowflakeType("TEXT", length=MAX_TEXT)
+_COUNT_TYPE = SnowflakeType("NUMBER", 19, 0)
+
+# Result type of a select-list expression that is a call to one of the shims.
+_FUNCTION_TYPES: dict[str, SnowflakeType] = {
+    "PARSE_JSON": SnowflakeType("VARIANT"),
+    "TO_VARIANT": SnowflakeType("VARIANT"),
+    "TO_JSON": SnowflakeType("TEXT", length=MAX_TEXT),
+    "OBJECT_CONSTRUCT": SnowflakeType("OBJECT"),
+    "ARRAY_CONSTRUCT": SnowflakeType("ARRAY"),
+    "TO_BINARY": SnowflakeType("BINARY", length=MAX_BINARY),
+    "CURRENT_DATE": SnowflakeType("DATE"),
+    "CURRENT_TIMESTAMP": SnowflakeType("TIMESTAMP_LTZ", scale=9),
+}
+
+_ALIAS_STOP_WORDS = {
+    "ON",
+    "WHERE",
+    "JOIN",
+    "LEFT",
+    "RIGHT",
+    "INNER",
+    "OUTER",
+    "CROSS",
+    "FULL",
+    "NATURAL",
+    "GROUP",
+    "ORDER",
+    "LIMIT",
+    "OFFSET",
+    "HAVING",
+    "UNION",
+    "EXCEPT",
+    "INTERSECT",
+    "USING",
+    "SET",
+    "VALUES",
+    "SELECT",
+    "DEFAULT",
+    "RETURNING",
+    "WINDOW",
+    "FETCH",
+    "FOR",
+}
+
+
+class SnowflakeError(Exception):
+    """An error in Snowflake's JSON shape: ``code`` (6 digits) and SQLSTATE."""
+
+    def __init__(self, message: str, code: str = "001003", sql_state: str = "42000") -> None:
+        super().__init__(message)
+        self.code = code
+        self.sql_state = sql_state
+
+
+@dataclass
+class Result:
+    rowtype: list[dict[str, Any]]
+    rowset_b64: str
+    statement_type_id: int
+    total: int
+    rowset_json: list[list[str | None]] | None = None
+
+
+def status_result(message: str, statement_type_id: int = STATEMENT_DDL) -> Result:
+    rowtype, b64 = encode_rowset([("status", _STATUS_TYPE, [message])], nullable=[False])
+    return Result(rowtype, b64, statement_type_id, 1)
+
+
+def dml_result(label: str, count: int, statement_type_id: int) -> Result:
+    rowtype, b64 = encode_rowset([(label, _COUNT_TYPE, [count])], nullable=[False])
+    return Result(rowtype, b64, statement_type_id, 1, rowset_json=[[str(count)]])
+
+
+def _json_value(value: Any) -> Any:
+    """Shim argument → JSON value (strings holding JSON are parsed)."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _parse_json(text: Any) -> str | None:
+    if text is None:
+        return None
+    try:
+        return json.dumps(json.loads(text))
+    except ValueError as exc:
+        raise SnowflakeError(f"Error parsing JSON: {exc}", "100069", "22P02") from None
+
+
+def _object_construct(*args: Any) -> str:
+    pairs = zip(args[0::2], args[1::2], strict=False)
+    return json.dumps({str(k): _json_value(v) for k, v in pairs if v is not None})
+
+
+def _array_construct(*args: Any) -> str:
+    return json.dumps([_json_value(a) for a in args])
+
+
+def _to_variant(value: Any) -> str | None:
+    return None if value is None else json.dumps(_json_value(value))
+
+
+def _to_binary(value: Any, fmt: str = "HEX") -> str | None:
+    if value is None:
+        return None
+    fmt = fmt.upper()
+    if fmt == "HEX":
+        return str(value).upper()
+    if fmt == "UTF-8" or fmt == "UTF8":
+        return str(value).encode().hex().upper()
+    if fmt == "BASE64":
+        return base64.b64decode(str(value)).hex().upper()
+    raise SnowflakeError(f"Unsupported TO_BINARY format {fmt}")
+
+
+class Database:
+    """One SQLite file standing in for a Snowflake database."""
+
+    def __init__(self, path: str | os.PathLike[str], *, name: str = "FAKEDB") -> None:
+        self.path = str(path)
+        self.name = name.upper()
+        self.lock = threading.RLock()
+        self._sessions: list[Session] = []
+
+    def session(self, schema: str = "PUBLIC") -> Session:
+        s = Session(self, schema)
+        self._sessions.append(s)
+        return s
+
+    def close(self) -> None:
+        for s in list(self._sessions):
+            s.close()
+
+
+_DDL_NAME_RE = re.compile(
+    r'^(CREATE|DROP)\s+(TABLE|VIEW)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?("(?:[^"]|"")*"|[^\s(]+)',
+    re.IGNORECASE,
+)
+
+
+def _unquote(ident: str) -> str:
+    if ident.startswith('"') and ident.endswith('"'):
+        return ident[1:-1].replace('""', '"')
+    return ident.upper()
+
+
+class Session:
+    """One Snowflake session: its own sqlite3 connection, shared file."""
+
+    def __init__(self, database: Database, schema: str) -> None:
+        self.database = database
+        self.schema = schema.upper()
+        self.conn = sqlite3.connect(
+            database.path, isolation_level=None, check_same_thread=False, timeout=5
+        )
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA foreign_keys=ON")
+        self._register_functions()
+        self.closed = False
+
+    def close(self) -> None:
+        if not self.closed:
+            self.closed = True
+            self.conn.close()
+            if self in self.database._sessions:
+                self.database._sessions.remove(self)
+
+    def _register_functions(self) -> None:
+        c = self.conn
+        c.create_function("PARSE_JSON", 1, _parse_json)
+        c.create_function("TRY_PARSE_JSON", 1, _parse_json)
+        c.create_function("TO_VARIANT", 1, _to_variant)
+        c.create_function("TO_JSON", 1, lambda v: v)
+        c.create_function("OBJECT_CONSTRUCT", -1, _object_construct)
+        c.create_function("ARRAY_CONSTRUCT", -1, _array_construct)
+        c.create_function("TO_BINARY", -1, _to_binary)
+        constants = {
+            "CURRENT_DATABASE": self.database.name,
+            "CURRENT_SCHEMA": self.schema,
+            "CURRENT_WAREHOUSE": "WH",
+            "CURRENT_ROLE": "PUBLIC",
+            "CURRENT_USER": "CI",
+            "CURRENT_ACCOUNT": "FAKEACCT",
+            "CURRENT_REGION": "FAKE_REGION",
+            "CURRENT_VERSION": "0.0.0 (fake)",
+        }
+        for name, value in constants.items():
+            c.create_function(name, 0, lambda v=value: v)
+
+    # ── dispatch ─────────────────────────────────────────────────────
+
+    def execute(self, sql: str, bindings: dict[str, Any] | None = None) -> Result:
+        kind = statement_kind(sql)
+        with self.database.lock:
+            if kind in ("ALTER_SESSION", "USE"):
+                return status_result("Statement executed successfully.")
+            if kind in ("BEGIN", "COMMIT", "ROLLBACK"):
+                return self._transaction(kind)
+            return self._run_sql(sql, kind, coerce_bindings(bindings))
+
+    def _transaction(self, kind: str) -> Result:
+        try:
+            self.conn.execute(kind)
+        except sqlite3.OperationalError as exc:
+            if "transaction" not in str(exc):
+                raise _translate(exc) from None
+        return status_result("Statement executed successfully.")
+
+    def _run_sql(self, sql: str, kind: str, params: list[Any] | dict[str, Any]) -> Result:
+        statement, pre = rewrite_statement(sql, schema=self.schema, database=self.database.name)
+        try:
+            for extra in pre:
+                self.conn.execute(extra)
+            cursor = self.conn.execute(statement, params)
+        except sqlite3.Error as exc:
+            raise _translate(exc) from None
+        if cursor.description is not None:
+            return self._rows_result(statement, cursor)
+        if kind == "INSERT":
+            return dml_result("number of rows inserted", cursor.rowcount, STATEMENT_INSERT)
+        if kind == "UPDATE":
+            return dml_result("number of rows updated", cursor.rowcount, STATEMENT_UPDATE)
+        if kind in ("DELETE", "TRUNCATE"):
+            return dml_result("number of rows deleted", cursor.rowcount, STATEMENT_DELETE)
+        return status_result(_ddl_message(statement))
+
+    # ── row results ──────────────────────────────────────────────────
+
+    def table_columns(self, table: str) -> dict[str, tuple[SnowflakeType, bool]]:
+        """Declared column types of ``table`` (upper-cased names), ``{}`` if unknown."""
+        quoted = '"' + table.replace('"', '""') + '"'
+        try:
+            rows = self.conn.execute(f"PRAGMA table_xinfo({quoted})").fetchall()
+        except sqlite3.Error:
+            return {}
+        return {
+            str(r[1]).upper(): (parse_type(str(r[2] or "")), not r[3]) for r in rows if r[6] != 2
+        }
+
+    def _rows_result(self, statement: str, cursor: sqlite3.Cursor) -> Result:
+        names = [d[0] for d in cursor.description]
+        rows = cursor.fetchall()
+        columns = [[row[i] for row in rows] for i in range(len(names))]
+        tables = _referenced_tables(statement)
+        declared: dict[str, dict[str, tuple[SnowflakeType, bool]]] = {
+            t: self.table_columns(t) for t in set(tables.values())
+        }
+        by_name: dict[str, tuple[SnowflakeType, bool]] = {}
+        for cols in declared.values():
+            for cname, info in cols.items():
+                by_name.setdefault(cname, info)
+        exprs = _select_expressions(statement)
+        typed: list[tuple[str, SnowflakeType, list[Any]]] = []
+        nullable: list[bool] = []
+        for i, name in enumerate(names):
+            found: tuple[SnowflakeType, bool] | None = None
+            if i < len(exprs):
+                found = _expression_type(exprs[i], tables, declared, by_name)
+            if found is None:
+                found = by_name.get(name.upper())
+            info = found if found is not None else (infer_type(columns[i]), True)
+            typed.append((name, info[0], columns[i]))
+            nullable.append(info[1])
+        rowtype, b64 = encode_rowset(typed, nullable=nullable)
+        return Result(rowtype, b64, STATEMENT_SELECT, len(rows))
+
+
+def _translate(exc: sqlite3.Error) -> SnowflakeError:
+    msg = str(exc)
+    if "no such table" in msg or "no such column" in msg or "no such view" in msg:
+        return SnowflakeError(
+            f"SQL compilation error:\n{msg}; object does not exist or not authorized.",
+            "002003",
+            "42S02",
+        )
+    if isinstance(exc, sqlite3.IntegrityError):
+        return SnowflakeError(f"{msg}", "100072", "22000")
+    return SnowflakeError(f"SQL compilation error:\n{msg}", "001003", "42000")
+
+
+def _ddl_message(statement: str) -> str:
+    m = _DDL_NAME_RE.match(statement.strip())
+    if not m:
+        return "Statement executed successfully."
+    verb, obj, name = m.group(1).upper(), m.group(2).capitalize(), _unquote(m.group(3))
+    if verb == "CREATE":
+        return f"{obj} {name} successfully created."
+    return f"{name} successfully dropped."
+
+
+def _referenced_tables(statement: str) -> dict[str, str]:
+    """``{alias_or_name: table_name}`` for tables after FROM/JOIN/INTO/UPDATE."""
+    toks = _significant(tokenize(statement))
+    tables: dict[str, str] = {}
+    i = 0
+    n = len(toks)
+    while i < n:
+        if toks[i].upper in ("FROM", "JOIN", "INTO", "UPDATE") and toks[i].kind == "word":
+            i += 1
+            while i < n:
+                if toks[i].text == "(":
+                    i = _skip_parens(toks, i)
+                    break
+                name = toks[i].ident()
+                if name is None:
+                    break
+                i += 1
+                alias = name
+                if i < n and toks[i].upper == "AS":
+                    i += 1
+                if (
+                    i < n
+                    and toks[i].kind in ("word", "quoted")
+                    and toks[i].upper not in _ALIAS_STOP_WORDS
+                ):
+                    alias = toks[i].ident() or alias
+                    i += 1
+                tables[alias.upper()] = name
+                tables.setdefault(name.upper(), name)
+                if i < n and toks[i].text == "," and toks[i - 1].upper != "FROM":
+                    i += 1
+                    continue
+                break
+        else:
+            i += 1
+    return tables
+
+
+def _select_expressions(statement: str) -> list[list[Token]]:
+    """Top-level select-list expressions (alias clauses included), or ``[]``."""
+    toks = _significant(tokenize(statement))
+    depth = 0
+    start = None
+    for i, t in enumerate(toks):
+        if t.text == "(":
+            depth += 1
+        elif t.text == ")":
+            depth -= 1
+        elif depth == 0 and t.kind == "word" and t.upper == "SELECT":
+            start = i + 1
+            break
+    if start is None:
+        return []
+    if start < len(toks) and toks[start].upper in ("DISTINCT", "ALL"):
+        start += 1
+    exprs: list[list[Token]] = []
+    current: list[Token] = []
+    depth = 0
+    for t in toks[start:]:
+        if t.text == "(":
+            depth += 1
+        elif t.text == ")":
+            depth -= 1
+        if (
+            depth == 0
+            and t.kind == "word"
+            and t.upper in ("FROM", "WHERE", "GROUP", "ORDER", "LIMIT", "UNION")
+        ):
+            break
+        if depth == 0 and t.text == ",":
+            exprs.append(current)
+            current = []
+            continue
+        current.append(t)
+    if current:
+        exprs.append(current)
+    return exprs
+
+
+def _expression_type(
+    expr: list[Token],
+    tables: dict[str, str],
+    declared: dict[str, dict[str, tuple[SnowflakeType, bool]]],
+    by_name: dict[str, tuple[SnowflakeType, bool]],
+) -> tuple[SnowflakeType, bool] | None:
+    # Drop a trailing ``AS alias``.
+    if len(expr) >= 3 and expr[-2].kind == "word" and expr[-2].upper == "AS":
+        expr = expr[:-2]
+    if not expr:
+        return None
+    idents = [t.ident() for t in expr]
+    if len(expr) == 1 and idents[0] is not None and expr[0].kind in ("word", "quoted"):
+        return by_name.get(idents[0].upper())
+    if len(expr) == 3 and expr[1].text == "." and idents[0] and idents[2]:
+        table = tables.get(idents[0].upper())
+        if table is not None:
+            return declared.get(table, {}).get(idents[2].upper())
+        return by_name.get(idents[2].upper())
+    if expr[0].kind == "word" and len(expr) > 1 and expr[1].text == "(":
+        t = _FUNCTION_TYPES.get(expr[0].upper)
+        if t is not None:
+            return (t, True)
+    if expr[0].kind == "word" and expr[0].upper in _FUNCTION_TYPES and len(expr) == 1:
+        return (_FUNCTION_TYPES[expr[0].upper], True)
+    return None

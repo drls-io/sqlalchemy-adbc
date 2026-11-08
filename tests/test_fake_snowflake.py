@@ -12,6 +12,7 @@ import base64
 import datetime as dt
 import io
 from decimal import Decimal
+from typing import Any
 
 import pyarrow as pa
 import pytest
@@ -310,3 +311,132 @@ def test_coerce_bindings_positional_and_named():
         }
     ) == ["1.50", 2.0, 1, None]
     assert coerce_bindings({"CATALOG": {"type": "TEXT", "value": "%"}}) == {"CATALOG": "%"}
+
+
+# ── sqlengine.py: session execution ──────────────────────────────────
+
+
+@pytest.fixture
+def session(tmp_path):
+    from tests.fake_snowflake.sqlengine import Database
+
+    db = Database(tmp_path / "fake.db")
+    s = db.session()
+    yield s
+    s.close()
+    db.close()
+
+
+def _status(result) -> list[Any]:
+    return decode_rowset(result.rowset_b64).column("status").to_pylist()
+
+
+def test_ddl_dml_select_round_trip(session):
+    from tests.fake_snowflake.sqlengine import STATEMENT_DDL, STATEMENT_INSERT, STATEMENT_SELECT
+
+    r = session.execute(
+        'CREATE TABLE "T" ("ID" NUMBER(38,0) NOT NULL, "N" NUMBER(10,2), "NAME" VARCHAR(50), '
+        '"D" DATE, "OK" BOOLEAN)'
+    )
+    assert r.statement_type_id == STATEMENT_DDL
+    assert _status(r) == ["Table T successfully created."]
+    r = session.execute(
+        'INSERT INTO "T" VALUES (?, ?, ?, ?, ?)',
+        {
+            "1": {"type": "FIXED", "value": "1"},
+            "2": {"type": "TEXT", "value": "1.50"},
+            "3": {"type": "TEXT", "value": "a"},
+            "4": {"type": "TEXT", "value": "2024-01-02"},
+            "5": {"type": "FIXED", "value": "1"},
+        },
+    )
+    assert r.statement_type_id == STATEMENT_INSERT
+    assert r.rowset_json == [["1"]]
+    assert r.rowtype[0]["name"] == "number of rows inserted"
+    assert decode_rowset(r.rowset_b64).column("number of rows inserted").to_pylist() == [Decimal(1)]
+    r = session.execute('SELECT "ID", "N", "NAME", "D", "OK" FROM "T"')
+    assert r.statement_type_id == STATEMENT_SELECT and r.total == 1
+    assert [c["type"] for c in r.rowtype] == ["fixed", "fixed", "text", "date", "boolean"]
+    tbl = decode_rowset(r.rowset_b64)
+    assert tbl.column("N").to_pylist() == [Decimal("1.50")]
+    assert tbl.column("OK").to_pylist() == [True]
+    assert tbl.column("D").to_pylist() == [dt.date(2024, 1, 2)]
+
+
+def test_select_expression_columns_are_typed(session):
+    session.execute("CREATE TABLE T (ID INT)")
+    session.execute("INSERT INTO T VALUES (?)", {"1": {"type": "FIXED", "value": "3"}})
+    r = session.execute("SELECT count(*) AS c, 1, NULL AS n, 'x' AS s, 1.5 AS f FROM T")
+    assert [c["type"] for c in r.rowtype] == ["fixed", "fixed", "text", "text", "real"]
+    assert r.rowtype[2]["length"] == 16777216
+    tbl = decode_rowset(r.rowset_b64)
+    assert tbl.column("c").to_pylist() == [Decimal("1")]
+    assert tbl.column("n").to_pylist() == [None]
+
+
+def test_result_types_follow_declared_columns_through_alias_and_join(session):
+    session.execute("CREATE TABLE A (ID INT, TS TIMESTAMP_NTZ)")
+    session.execute("CREATE TABLE B (ID INT, V VARIANT)")
+    session.execute("INSERT INTO A VALUES (1, '2024-01-02 03:04:05')")
+    session.execute("""INSERT INTO B VALUES (1, '{"k": 1}')""")
+    r = session.execute("SELECT a.ts, b.v FROM A AS a JOIN B AS b ON a.id = b.id")
+    assert [c["type"] for c in r.rowtype] == ["timestamp_ntz", "variant"]
+    r = session.execute("SELECT ts AS when_, v FROM a, b")
+    assert [c["type"] for c in r.rowtype] == ["timestamp_ntz", "variant"]
+
+
+def test_update_delete_counts_and_rollback(session):
+    session.execute("CREATE TABLE T (ID INT)")
+    session.execute("INSERT INTO T VALUES (1), (2), (3)")
+    r = session.execute("UPDATE T SET ID = ID + 10 WHERE ID > 1")
+    assert r.rowset_json == [["2"]] and r.rowtype[0]["name"] == "number of rows updated"
+    session.execute("BEGIN")
+    r = session.execute("DELETE FROM T")
+    assert r.rowset_json == [["3"]] and r.rowtype[0]["name"] == "number of rows deleted"
+    session.execute("ROLLBACK")
+    r = session.execute("SELECT count(*) AS c FROM T")
+    assert decode_rowset(r.rowset_b64).column("c").to_pylist() == [Decimal("3")]
+    session.execute("COMMIT")  # no active transaction: must not raise
+    session.execute("ROLLBACK")
+
+
+def test_alter_session_and_use_are_noops(session):
+    r = session.execute("ALTER SESSION SET AUTOCOMMIT = false")
+    assert _status(r) == ["Statement executed successfully."]
+    session.execute("USE SCHEMA PUBLIC")
+
+
+def test_drop_table_status_and_truncate(session):
+    session.execute("CREATE TABLE T (ID INT)")
+    session.execute("INSERT INTO T VALUES (1)")
+    session.execute("TRUNCATE TABLE T")
+    r = session.execute("SELECT count(*) AS c FROM T")
+    assert decode_rowset(r.rowset_b64).column("c").to_pylist() == [Decimal("0")]
+    assert _status(session.execute("DROP TABLE IF EXISTS t")) == ["T successfully dropped."]
+
+
+def test_snowflake_function_shims(session):
+    r = session.execute(
+        """SELECT PARSE_JSON('{"k": [1, 2, 3]}') AS v, OBJECT_CONSTRUCT('a', 'b') AS o,
+        ARRAY_CONSTRUCT(1, 2) AS a, TO_BINARY('0102', 'HEX') AS b,
+        CURRENT_DATABASE() AS db, CURRENT_SCHEMA() AS sc"""
+    )
+    tbl = decode_rowset(r.rowset_b64)
+    assert tbl.column("v").to_pylist() == ['{"k": [1, 2, 3]}']
+    assert tbl.column("o").to_pylist() == ['{"a": "b"}']
+    assert tbl.column("a").to_pylist() == ["[1, 2]"]
+    assert tbl.column("b").to_pylist() == [b"\x01\x02"]
+    assert tbl.column("db").to_pylist() == ["FAKEDB"]
+    assert tbl.column("sc").to_pylist() == ["PUBLIC"]
+    assert [c["type"] for c in r.rowtype][:4] == ["variant", "object", "array", "binary"]
+
+
+def test_errors_map_to_snowflake_codes(session):
+    from tests.fake_snowflake.sqlengine import SnowflakeError
+
+    with pytest.raises(SnowflakeError) as e:
+        session.execute("SELECT * FROM NOPE")
+    assert e.value.code == "002003" and e.value.sql_state == "42S02" and "NOPE" in str(e.value)
+    with pytest.raises(SnowflakeError) as e:
+        session.execute("SELEC 1")
+    assert e.value.code == "001003" and e.value.sql_state == "42000"
