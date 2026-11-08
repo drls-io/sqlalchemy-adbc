@@ -196,7 +196,7 @@ def test_crud_through_core(snowflake_engine):
             assert rows[1][1:] == ("b", None, None, False)
             stmt = sa.select(t.c.NAME).where(t.c.ID == sa.bindparam("p"))
             assert c.execute(stmt, {"p": 2}).scalar() == "b"
-            c.execute(t.delete().where(t.c.OK.is_(False)))
+            c.execute(t.delete().where(~t.c.OK))
             assert c.execute(sa.select(sa.func.count()).select_from(t)).scalar() == 1
     finally:
         md.drop_all(snowflake_engine)

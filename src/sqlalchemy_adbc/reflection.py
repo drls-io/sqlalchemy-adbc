@@ -170,7 +170,13 @@ def columns_from_table(
     dialect-specific types (JSONB, UUID, ...) reflect correctly.
     """
     out: list[dict[str, Any]] = []
-    for col in tbl.get("table_columns") or []:
+    columns = list(tbl.get("table_columns") or [])
+    # Snowflake's driver aggregates information_schema.columns without an
+    # ORDER BY, so the list can arrive in any order; the ordinal position
+    # is authoritative when every column carries one.
+    if columns and all(isinstance(c.get("ordinal_position"), int) for c in columns):
+        columns.sort(key=lambda c: c["ordinal_position"])
+    for col in columns:
         name = col.get("column_name")
         if not name:
             continue

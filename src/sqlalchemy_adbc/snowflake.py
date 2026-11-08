@@ -98,6 +98,9 @@ class ADBCSnowflakeDialect(ADBCDialect):
     # NUMBER is exact; without this SQLAlchemy's Numeric binds ints and
     # Decimals as float and NUMBER(38,0) values above 2**53 lose digits.
     supports_native_decimal = True
+    # Snowflake has BOOLEAN with true/false literals; without this SQLAlchemy
+    # renders booleans as 0/1 and ``WHERE "OK" IS 0`` is a syntax error there.
+    supports_native_boolean = True
     colspecs = {
         sa_types.Date: _IsoDate,
         sa_types.DateTime: _IsoDateTime,
