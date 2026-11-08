@@ -6,6 +6,19 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Arrow-native helpers** — `sqlalchemy_adbc.arrow` (also exported from the
+  package): `fetch_arrow_table(conn, statement, parameters)`,
+  `open_arrow_batch_reader(...)` (streaming context manager) and
+  `ingest_arrow(conn, table, data, mode=...)` run on the ADBC cursor behind a
+  SQLAlchemy `Connection`, inside its transaction, with SQLAlchemy statements
+  compiled by the dialect (bind processors included) or plain SQL strings.
+  Tested on SQLite, PostgreSQL, Flight SQL and the fake Snowflake endpoint;
+  `benchmarks/arrow_vs_rows.py` measures ~7× over the row path on SQLite.
+- `sqlalchemy_adbc.__version__` now reports the installed package version
+  (it was a stale constant).
+
 ## [0.7.0] — 2026-11-08
 
 Flight SQL, the backend this package is about, is now integration-tested in
