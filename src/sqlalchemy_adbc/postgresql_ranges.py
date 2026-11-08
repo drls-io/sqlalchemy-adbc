@@ -33,7 +33,6 @@ from sqlalchemy.dialects.postgresql import MultiRange, Range
 _VALID_BOUNDS = {"[)", "[]", "(]", "()"}
 _INFINITE = {"infinity", "-infinity"}
 _NEEDS_QUOTES = re.compile(r'[\s,"\\()\[\]]')
-_BARE_OFFSET = re.compile(r"([+-]\d{2})$")
 
 
 @dataclass(frozen=True)
@@ -50,8 +49,8 @@ def _parse_timestamp(text: str) -> dt.datetime:
 
 
 def _parse_timestamptz(text: str) -> dt.datetime:
-    # PG renders a whole-hour offset as "+00"; Python 3.10 needs "+00:00".
-    return dt.datetime.fromisoformat(_BARE_OFFSET.sub(r"\1:00", text))
+    # PG renders a whole-hour offset as "+00"; fromisoformat accepts it from 3.11.
+    return dt.datetime.fromisoformat(text)
 
 
 def _format_timestamptz(value: dt.datetime) -> str:

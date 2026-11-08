@@ -33,7 +33,7 @@ def test_date_binds_as_iso_string():
 
 def test_datetime_binds_as_iso_string_with_space():
     assert _bind(sa_types.DateTime(), dt.datetime(2024, 1, 2, 3, 4, 5)) == "2024-01-02 03:04:05"
-    aware = dt.datetime(2024, 1, 2, 3, 4, 5, 123456, tzinfo=dt.timezone.utc)
+    aware = dt.datetime(2024, 1, 2, 3, 4, 5, 123456, tzinfo=dt.UTC)
     assert _bind(sa_types.DateTime(timezone=True), aware) == "2024-01-02 03:04:05.123456+00:00"
 
 

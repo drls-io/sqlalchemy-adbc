@@ -30,18 +30,13 @@ so secrets stay out of files and URLs.
 from __future__ import annotations
 
 import os
-import sys
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy.exc import ArgumentError
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - exercised on the 3.10 CI cell
-    import tomli as tomllib
 
 CONFIG_ENV = "SQLALCHEMY_ADBC_CONFIG"
 USER_CONFIG = Path("~/.config/sqlalchemy-adbc/config.toml")

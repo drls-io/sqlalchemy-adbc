@@ -111,7 +111,7 @@ def test_number_binds_whole_values_without_float_conversion(engine, table):
 def test_bind_every_python_type_in_one_row(engine, table):
     """The exact cases that failed on the raw driver (finding B)."""
     t = sa.Table(table, sa.MetaData(), autoload_with=engine)
-    aware = dt.datetime(2024, 1, 2, 3, 4, 5, 123456, tzinfo=dt.timezone.utc)
+    aware = dt.datetime(2024, 1, 2, 3, 4, 5, 123456, tzinfo=dt.UTC)
     with engine.begin() as c:
         c.execute(
             t.insert().values(

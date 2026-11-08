@@ -6,6 +6,13 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **Python 3.10 support.** 3.10 reached end of life in October 2026, and
+  SQLAlchemy 2.1 and ADBC 1.13 already require 3.11. `requires-python` is now
+  `>=3.11`, the `tomli` dependency is gone (`tomllib` is in the standard
+  library), and CI and tox run 3.11–3.14. Python 3.14 is new in the matrix.
+
 ### Changed
 
 - CI's PostgreSQL integration tests now use the documented

@@ -191,7 +191,7 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   column reflects as nullable=True
   ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13))
 
-Tests run on Python 3.10–3.13 in CI, including PostgreSQL integration
+Tests run on Python 3.11–3.14 in CI, including PostgreSQL integration
 tests against a service-container Postgres; see the badge above for the
 current state.
 
@@ -205,7 +205,7 @@ pip install -e ".[dev]"
 pytest                 # unit tests; live backends via DRLS_PG_URL / DRLS_SNOWFLAKE_URL
 ruff check src/ tests/ && ruff format --check src/ tests/
 mypy src tests
-tox                    # same gates across Python 3.10–3.13 × SQLAlchemy 2.0/2.1 (tox.ini)
+tox                    # same gates across Python 3.11–3.14 × SQLAlchemy 2.0/2.1 (tox.ini)
 ```
 
 ## Releasing

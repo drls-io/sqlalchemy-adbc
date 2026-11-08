@@ -8,7 +8,7 @@ version = "0.5.0"
 description = "Generic SQLAlchemy dialect for any ADBC driver (Flight SQL, PostgreSQL, SQLite, Snowflake, BigQuery)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [{ name = "DRLS Contributors" }]
 keywords = ["sqlalchemy", "adbc", "arrow", "flight-sql", "dialect"]
 classifiers = [
@@ -17,10 +17,10 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Database",
 ]
 dependencies = [
@@ -31,8 +31,6 @@ dependencies = [
     # them through DBAPI. Without it, `cursor.fetchall()` raises a
     # ProgrammingError.
     "pyarrow>=14.0",
-    # TOML config file (tomllib is stdlib from 3.11).
-    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -87,18 +85,16 @@ packages = ["src/sqlalchemy_adbc"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["E501"]
 
 [tool.mypy]
-# Intentionally 3.10 (not 3.9) — mypy traverses third-party packages
-# via follow-imports, and pytest itself uses `match`/`case` syntax that
-# the 3.9 parser can't even tokenize. Our own source is still
-# 3.9-compatible; runtime compat is covered by the pytest matrix.
-python_version = "3.10"
+# Matches requires-python; runtime compat across 3.11–3.14 is covered by
+# the pytest matrix.
+python_version = "3.11"
 strict_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
@@ -109,7 +105,6 @@ follow_imports = "silent"
 
 [[tool.mypy.overrides]]
 module = [
-    "tomli",  # only imported on Python < 3.11
     "spnego.*",  # optional `kerberos` extra, imported lazily
     "adbc_driver_manager.*",
     "adbc_driver_flightsql.*",

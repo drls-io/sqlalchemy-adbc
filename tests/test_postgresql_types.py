@@ -29,7 +29,7 @@ import sqlalchemy as sa
 from sqlalchemy import inspect
 from sqlalchemy.dialects.postgresql import MultiRange, Range
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 PG_URL = os.environ.get("DRLS_PG_URL")
 pytestmark = pytest.mark.skipif(
