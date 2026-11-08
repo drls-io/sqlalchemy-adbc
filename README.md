@@ -229,10 +229,13 @@ checked against each other by anyone with an account.
 
 The fake is a model of Snowflake, not Snowflake. It does not reproduce
 Snowflake-only SQL rules (`PARSE_JSON(?)` inside `VALUES` is accepted here
-and rejected there), result chunking, async queries, stages or bulk ingest,
-and result column labels of textual SQL follow SQLite (`select id` yields
-`id` where Snowflake yields `ID`). Treat a green fake run as "the dialect
-and driver agree", and the live run as the truth.
+and rejected there), result chunking, async queries, stages or bulk ingest;
+result column labels of textual SQL follow SQLite (`select id` yields `id`
+where Snowflake yields `ID`); and NUMBER values are limited to what SQLite
+stores exactly (int64, or 15 significant digits), beyond which the fake
+raises a data conversion error rather than return a wrong value. Treat a
+green fake run as "the dialect and driver agree", and the live run as the
+truth.
 
 ## Releasing
 

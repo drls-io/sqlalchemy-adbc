@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import decimal
 import io
 import re
 from dataclasses import dataclass
@@ -241,9 +242,30 @@ def _to_date(value: Any) -> dt.date:
     return dt.date.fromisoformat(str(value).strip()[:10])
 
 
+def _significant_digits(value: float | int) -> int:
+    mantissa = repr(value).split("e")[0]
+    return len("".join(ch for ch in mantissa if ch.isdigit()).lstrip("0"))
+
+
 def _to_decimal(value: Any, scale: int) -> Decimal:
+    # SQLite's NUMERIC affinity turns decimal text into a double (and an
+    # integral double back into an int64), so a NUMBER beyond 15 significant
+    # digits is already wrong by the time it is read. Refuse rather than
+    # return a plausible-looking but mangled Decimal; whole NUMBER(p,0)
+    # values are exact as long as they stayed int64.
+    suspicious = isinstance(value, float) or (
+        isinstance(value, int) and not isinstance(value, bool) and scale > 0
+    )
+    if suspicious and _significant_digits(value) >= 16:
+        raise ValueError(
+            f"NUMBER value {value!r} exceeds the precision SQLite stored it with; "
+            "the fake cannot represent more than 15 significant digits in a scaled "
+            "NUMBER or values outside int64"
+        )
     d = value if isinstance(value, Decimal) else Decimal(str(value))
-    return d.quantize(Decimal(1).scaleb(-scale))
+    with decimal.localcontext() as ctx:
+        ctx.prec = 38
+        return d.quantize(Decimal(1).scaleb(-scale))
 
 
 def _arrow_column(t: SnowflakeType, values: list[Any]) -> pa.Array:

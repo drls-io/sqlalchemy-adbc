@@ -964,3 +964,40 @@ def test_value_conversion_failure_is_a_snowflake_error(session):
     with pytest.raises(SnowflakeError) as e:
         session.execute("SELECT D FROM T")
     assert e.value.code == "100040" and "not a date" in str(e.value)
+
+
+def test_number_values_beyond_double_precision_raise_instead_of_lying(session):
+    # SQLite's NUMERIC affinity stores NUMBER text as INTEGER/REAL, so values
+    # beyond ~16 significant digits lose precision silently. A test oracle
+    # must not return a wrong Decimal without saying so (review finding).
+    from tests.fake_snowflake.sqlengine import SnowflakeError
+
+    session.execute("CREATE TABLE T (N NUMBER(38,2), W NUMBER(38,0))")
+    session.execute(
+        "INSERT INTO T VALUES (?, ?)",
+        {
+            "1": {"type": "TEXT", "value": "1234567890123.45"},
+            "2": {"type": "FIXED", "value": str(2**62)},
+        },
+    )
+    tbl = decode_rowset(session.execute("SELECT N, W FROM T").rowset_b64)
+    assert tbl.column("N").to_pylist() == [Decimal("1234567890123.45")]
+    assert tbl.column("W").to_pylist() == [Decimal(2**62)]
+    session.execute("DELETE FROM T")
+    session.execute(
+        "INSERT INTO T VALUES (?, ?)",
+        {
+            "1": {"type": "TEXT", "value": "12345678901234567.89"},
+            "2": {"type": "FIXED", "value": "1"},
+        },
+    )
+    with pytest.raises(SnowflakeError) as e:
+        session.execute("SELECT N FROM T")
+    assert e.value.code == "100040" and "precision" in str(e.value)
+    session.execute("DELETE FROM T")
+    session.execute(
+        "INSERT INTO T VALUES (?, ?)",
+        {"1": {"type": "TEXT", "value": "1"}, "2": {"type": "TEXT", "value": str(2**70)}},
+    )
+    with pytest.raises(SnowflakeError):
+        session.execute("SELECT W FROM T")

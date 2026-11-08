@@ -10,10 +10,20 @@ types survive untouched: SQLite accepts any type name, and
 ``PRAGMA table_xinfo`` hands it back verbatim, which is what the catalog
 answers are built from.
 
-Result column labels are whatever SQLite reports, so textual SQL such as
-``select id from t`` yields ``id`` here where Snowflake would yield ``ID``.
-Compiled SQLAlchemy statements match columns positionally and are
-unaffected.
+Known fidelity limits (keep this list and the README paragraph in step; do
+not "fix" a test to match the fake where they disagree with Snowflake):
+
+- NUMBER values are stored under SQLite's NUMERIC affinity, i.e. as int64 or
+  double. Values beyond 15 significant digits (or outside int64) cannot be
+  represented; reading one raises a ``100040`` data conversion error instead
+  of returning a mangled Decimal.
+- Result column labels are whatever SQLite reports, so textual SQL such as
+  ``select id from t`` yields ``id`` here where Snowflake would yield ``ID``.
+  Compiled SQLAlchemy statements match columns positionally and are
+  unaffected.
+- Snowflake-only SQL rules are not reproduced: ``PARSE_JSON(?)`` inside
+  ``VALUES`` is accepted here and rejected by Snowflake, ``DEFAULT
+  CURRENT_TIMESTAMP()`` with parentheses is rejected here and accepted there.
 """
 
 from __future__ import annotations
@@ -351,7 +361,10 @@ def _coerce_value(binding: dict[str, Any]) -> Any:
     if btype == "FIXED":
         s = str(value)
         if any(ch in s for ch in ".eE"):
-            return s  # exact decimal text; SQLite keeps it as given
+            # Decimal text. Under SQLite's NUMERIC affinity the column stores
+            # it as a double, so precision is capped at ~15 significant
+            # digits; results.py refuses to decode anything beyond that.
+            return s
         return int(s)
     if btype == "REAL":
         return float(value)
@@ -662,7 +675,11 @@ class Session:
         try:
             rowtype, b64 = encode_rowset(typed, nullable=nullable)
         except (ValueError, TypeError, ArithmeticError) as exc:
-            raise SnowflakeError(f"Data conversion error: {exc}", "100040", "22007") from None
+            raise SnowflakeError(
+                f"Data conversion error (fake Snowflake precision or format limit): {exc}",
+                "100040",
+                "22007",
+            ) from None
         return Result(rowtype, b64, STATEMENT_SELECT, len(rows))
 
 

@@ -272,8 +272,10 @@ def unique_constraints_from_table(tbl: dict[str, Any]) -> list[dict[str, Any]]:
 
 # ``table_type`` spellings differ per driver: SQLite reports ``table`` /
 # ``view`` / ``index``, Snowflake and BigQuery ``BASE TABLE`` / ``VIEW``.
+# Materialized views are deliberately not plain views: SQLAlchemy reports
+# them through ``get_materialized_view_names`` instead.
 _TABLE_TYPES = {"table", "base table", "base_table"}
-_VIEW_TYPES = {"view", "materialized view", "materialized_view"}
+_VIEW_TYPES = {"view"}
 
 
 def _names_of_type(tree: list[dict[str, Any]], kinds: set[str], schema: str | None) -> list[str]:
