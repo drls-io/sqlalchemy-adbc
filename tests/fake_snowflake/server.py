@@ -326,7 +326,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self.server_ref.requests.append(
                     (path, recorded if isinstance(recorded, dict) else {})
                 )
-        status, payload = self.server_ref.handle(path, query, self.headers, body)
+        try:
+            status, payload = self.server_ref.handle(path, query, self.headers, body)
+        except Exception as exc:  # noqa: BLE001 - a bug in the fake must not drop the connection
+            status, payload = (
+                200,
+                _error(f"Internal error in fake Snowflake: {exc!r}", "000603", "XX000"),
+            )
         self._respond(status, payload)
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib naming

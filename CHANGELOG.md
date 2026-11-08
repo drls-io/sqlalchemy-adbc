@@ -6,6 +6,28 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Flight SQL integration tests in CI** — a GizmoSQL (DuckDB backend) service
+  container runs `tests/test_flightsql_e2e.py` in every cell: basic and bearer
+  auth, failure modes, type round trips, parameters, transactions, reflection
+  and `pandas.read_sql`. The suite runs against any Flight SQL server via
+  `DRLS_FLIGHTSQL_URL`. With Snowflake covered by the fake endpoint, only
+  BigQuery remains URL-tests-only (#12).
+
+### Changed
+
+- An OAuth2 token-endpoint failure now surfaces when a connection is opened
+  (`engine.connect()`, as `sqlalchemy.exc.ArgumentError`) rather than at
+  `create_engine()`, a consequence of 0.6.0's per-connection minting.
+- Dev extra: `adbc-driver-flightsql` and `pandas` join it; the
+  `adbc-driver-snowflake` floor is 1.11, the wire details the fake endpoint
+  encodes.
+- The fake Snowflake endpoint answers an unexpected error during login with a
+  Snowflake error instead of dropping the connection, types ambiguous result
+  columns by `FROM` order, and reflects self-referential foreign keys and
+  unique indexes with quotes in their names.
+
 ## [0.6.0] — 2026-11-08
 
 Snowflake is now tested end to end in CI through a fake endpoint that drives the

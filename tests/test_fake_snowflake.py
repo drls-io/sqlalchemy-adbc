@@ -999,3 +999,59 @@ def test_number_values_beyond_double_precision_raise_instead_of_lying(session):
     )
     with pytest.raises(SnowflakeError):
         session.execute("SELECT W FROM T")
+
+
+# ── review minors from #35 ───────────────────────────────────────────
+
+
+def test_unexpected_login_error_is_a_snowflake_error(server, monkeypatch):
+    from tests.fake_snowflake import server as srv_mod
+
+    def boom(self, schema="PUBLIC"):
+        raise RuntimeError("login kaboom")
+
+    monkeypatch.setattr(srv_mod.Database, "session", boom)
+    status, body = _post(
+        f"{server.base_url}/session/v1/login-request",
+        {"data": {"ACCOUNT_NAME": "A", "LOGIN_NAME": "u", "PASSWORD": "p"}},
+    )
+    assert status == 200 and body["success"] is False
+    assert body["code"] == "000603" and "login kaboom" in body["message"]
+
+
+def test_ambiguous_column_type_follows_from_order(session):
+    session.execute("CREATE TABLE A (X VARCHAR(5), K INT)")
+    session.execute("CREATE TABLE B (X DATE, K INT)")
+    session.execute("INSERT INTO A VALUES ('ab', 1)")
+    session.execute("INSERT INTO B VALUES ('2024-01-02', 1)")
+    # ``SELECT *`` yields two columns named X; they are typed positionally in
+    # FROM order (was: both from whichever table a set() happened to yield).
+    r = session.execute("SELECT * FROM a JOIN b ON a.k = b.k")
+    assert [c["name"] for c in r.rowtype] == ["X", "K", "X", "K"]
+    assert [c["type"] for c in r.rowtype] == ["text", "fixed", "date", "fixed"]
+    r = session.execute("SELECT * FROM b JOIN a ON a.k = b.k")
+    assert [c["type"] for c in r.rowtype] == ["date", "fixed", "text", "fixed"]
+
+
+def test_unique_index_with_quote_in_name_reflects(session):
+    session.execute(
+        'CREATE TABLE T (ID INT PRIMARY KEY, CODE VARCHAR(5), CONSTRAINT "uq""x" UNIQUE (CODE))'
+    )
+    [cat] = _get_objects(session, GET_OBJECTS_ALL, DB_SCHEMA="PUBLIC", TABLE="T")
+    [tab] = cat["catalog_db_schemas"][0]["db_schema_tables"]
+    assert {
+        c["constraint_type"]: c["constraint_column_names"] for c in tab["table_constraints"]
+    } == {
+        "PRIMARY KEY": ["ID"],
+        "UNIQUE": ["CODE"],
+    }
+
+
+def test_self_referential_fk_without_column_list_reflects(session):
+    session.execute("CREATE TABLE NODE (ID INT PRIMARY KEY, PARENT INT REFERENCES NODE)")
+    [cat] = _get_objects(session, GET_OBJECTS_ALL, DB_SCHEMA="PUBLIC", TABLE="NODE")
+    [tab] = cat["catalog_db_schemas"][0]["db_schema_tables"]
+    [fk] = [c for c in tab["table_constraints"] if c["constraint_type"] == "FOREIGN KEY"]
+    assert fk["constraint_column_names"] == ["PARENT"]
+    assert fk["constraint_column_usage"][0]["fk_table"] == "NODE"
+    assert fk["constraint_column_usage"][0]["fk_column_name"] == "ID"

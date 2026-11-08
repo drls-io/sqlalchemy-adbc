@@ -81,6 +81,14 @@ emits a `DeprecationWarning` and will be removed in 1.0.
 | `header.<name>=<v>` | Forwarded via ADBC's `RPC_CALL_HEADER_PREFIX`      |
 | (any other key)     | Passed through as a db_kwarg verbatim              |
 
+**Tested servers.** CI runs the Flight SQL suite against
+[GizmoSQL](https://github.com/gizmodata/gizmosql) v1.42 (DuckDB backend):
+basic and bearer auth, type round trips, parameters, transactions,
+reflection and `pandas.read_sql`. Server-dependent: GizmoSQL's `GetObjects`
+reports no constraints or nullability, so reflected primary keys are empty
+and every column reflects `nullable=True`; its SQLite backend is not usable
+through the Go driver.
+
 ## Proxies
 
 The Flight SQL, Snowflake and BigQuery drivers are Go libraries that read
@@ -187,18 +195,18 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   reaches Python untouched. Typed columns via Core, ORM or reflection
   are decoded
   ([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11))
-- **Drivers exercised in CI** — SQLite fully, PostgreSQL
-  integration-tested via service container. Snowflake / BigQuery /
-  Flight SQL inherit the shared reflection path but have no
-  per-driver CI
+- **Drivers exercised in CI** — SQLite fully, PostgreSQL and Flight SQL
+  (GizmoSQL) via service containers, Snowflake through the real driver
+  against the fake endpoint under `tests/fake_snowflake/`. BigQuery has URL
+  translation tests only
   ([#12](https://github.com/drls-io/sqlalchemy-adbc/issues/12))
 - **ADBC SQLite NOT NULL reporting** — fixed upstream in
   `adbc_driver_sqlite` 1.13 (Python ≥ 3.11). On older drivers every
   column reflects as nullable=True
   ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13))
 
-Tests run on Python 3.11–3.14 in CI, including PostgreSQL integration
-tests against a service-container Postgres; see the badge above for the
+Tests run on Python 3.11–3.14 in CI, including PostgreSQL and Flight SQL
+integration tests against service containers; see the badge above for the
 current state.
 
 ## Development
@@ -208,11 +216,27 @@ git clone https://github.com/drls-io/sqlalchemy-adbc
 cd sqlalchemy-adbc
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                 # unit tests + the fake Snowflake endpoint; live backends via DRLS_PG_URL / DRLS_SNOWFLAKE_URL
+pytest                 # unit tests + the fake Snowflake endpoint; live backends via DRLS_PG_URL / DRLS_FLIGHTSQL_URL / DRLS_SNOWFLAKE_URL
 ruff check src/ tests/ && ruff format --check src/ tests/
 mypy src tests
 tox                    # same gates across Python 3.11–3.14 × SQLAlchemy 2.0/2.1 (tox.ini)
 ```
+
+### Flight SQL server
+
+The Flight SQL suite (`tests/test_flightsql_e2e.py`) needs a server. CI uses
+GizmoSQL as a service container; locally:
+
+```bash
+docker run -d --name gizmosql -p 31337:31337 -e GIZMOSQL_USERNAME=ci \
+  -e GIZMOSQL_PASSWORD=ci-password -e TLS_ENABLED=0 -e PRINT_QUERIES=0 \
+  gizmodata/gizmosql:v1.42.2
+export DRLS_FLIGHTSQL_URL="flightsql+adbc://ci:ci-password@127.0.0.1:31337?auth=basic&tls=false"
+pytest tests/test_flightsql_e2e.py
+```
+
+Any Flight SQL server works through the same variable; tests that depend
+on GizmoSQL specifics are documented in the module.
 
 ### Fake Snowflake endpoint
 

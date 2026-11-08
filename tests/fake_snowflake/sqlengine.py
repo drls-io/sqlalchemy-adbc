@@ -653,19 +653,31 @@ class Session:
         rows = cursor.fetchall()
         columns = [[row[i] for row in rows] for i in range(len(names))]
         tables = _referenced_tables(statement)
+        # FROM order, deduplicated: the first table named wins for a column
+        # name that appears in several tables (``SELECT *`` over a join).
         declared: dict[str, dict[str, tuple[SnowflakeType, bool]]] = {
-            t: self.table_columns(t) for t in set(tables.values())
+            t: self.table_columns(t) for t in dict.fromkeys(tables.values())
         }
         by_name: dict[str, tuple[SnowflakeType, bool]] = {}
         for cols in declared.values():
             for cname, info in cols.items():
                 by_name.setdefault(cname, info)
         exprs = _select_expressions(statement)
+        # ``SELECT *`` expands to every table's columns in FROM order, which
+        # is the only way to type two same-named columns from a join.
+        positional: list[tuple[SnowflakeType, bool]] = []
+        if len(exprs) == 1 and len(exprs[0]) == 1 and exprs[0][0].text == "*":
+            for table in dict.fromkeys(tables.values()):
+                positional.extend(declared.get(table, {}).values())
+            if len(positional) != len(names):
+                positional = []
         typed: list[tuple[str, SnowflakeType, list[Any]]] = []
         nullable: list[bool] = []
         for i, name in enumerate(names):
             found: tuple[SnowflakeType, bool] | None = None
-            if i < len(exprs):
+            if positional:
+                found = positional[i]
+            elif i < len(exprs):
                 found = _expression_type(exprs[i], tables, declared, by_name)
             if found is None:
                 found = by_name.get(name.upper())
@@ -1004,17 +1016,24 @@ class Catalog:
                 entry = fks.setdefault(int(fk_id), ([], ref_table, []))
                 entry[0].append(col_from)
                 entry[2].append(None if col_to is None else str(col_to))
+        primary_key = [c for _, c in sorted(pk)]
         foreign_keys: list[tuple[list[str], str, list[str]]] = []
         for cols, ref_table, ref_cols in fks.values():
             if any(c is None for c in ref_cols):
-                ref = self.table(ref_table)
-                ref_cols = list(ref.primary_key) if ref else []
+                # ``REFERENCES other`` without a column list means the other
+                # table's primary key; a self-reference must not recurse into
+                # building this table again.
+                if ref_table.upper() == name.upper():
+                    ref_cols = list(primary_key)
+                else:
+                    ref = self.table(ref_table)
+                    ref_cols = list(ref.primary_key) if ref else []
             foreign_keys.append((cols, ref_table, [c for c in ref_cols if c is not None]))
         return TableInfo(
             name=name,
             kind=kind,
             columns=columns,
-            primary_key=[c for _, c in sorted(pk)],
+            primary_key=primary_key,
             uniques=uniques,
             foreign_keys=foreign_keys,
         )
