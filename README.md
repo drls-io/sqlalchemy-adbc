@@ -156,15 +156,13 @@ through the Go driver.
 
 The Flight SQL, Snowflake and BigQuery drivers are Go libraries that read
 `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (either case) from the process
-environment. **Set them in the shell or launcher that starts Python.** The
-Go runtime snapshots the environment at process start, so a variable written
+environment. Set them in the shell or launcher that starts Python: the Go
+runtime snapshots the environment at process start, so a variable written
 later from Python, by this package or anything else, is not seen by the
-drivers. A `[proxy]` section in the local config file (below) is still
-exported into the environment on the first connect: it serves this package's
-own HTTP calls (the OAuth2 token request) and anything in the process that
-reads the environment at request time, and a WARNING is logged so the gap
-is visible. A variable you already set always wins. PostgreSQL (libpq) and
-SQLite have no HTTP proxy concept.
+drivers. Earlier versions exported a `[proxy]` section of the config file
+into the environment; it could never reach the drivers and is ignored with
+a warning since 0.9.0. PostgreSQL (libpq) and SQLite have no HTTP proxy
+concept.
 
 ## Authentication
 
@@ -193,10 +191,6 @@ it must be owned by you and not group- or world-writable, and the working
 directory is deliberately never searched. Any value may be `env:NAME`.
 
 ```toml
-[proxy]
-https_proxy = "http://proxy.corp.example:3128"
-no_proxy    = "localhost,127.0.0.1,.corp.example"
-
 [auth.drls-flight]
 type = "oauth2"
 token_url = "https://keycloak.example/realms/drls/protocol/openid-connect/token"
@@ -268,14 +262,11 @@ published wheels on [PyPI](https://pypi.org/project/sqlalchemy-adbc/).
   compile-only tests in CI; the live tests in `tests/test_bigquery_e2e.py`
   run when `DRLS_BIGQUERY_URL` is set and need Google Cloud credentials
   ([#12](https://github.com/drls-io/sqlalchemy-adbc/issues/12))
-- **ADBC SQLite NOT NULL reporting** — fixed upstream in
-  `adbc_driver_sqlite` 1.13 (Python ≥ 3.11). On older drivers every
-  column reflects as nullable=True
-  ([#13](https://github.com/drls-io/sqlalchemy-adbc/issues/13))
 
 Tests run on Python 3.12–3.14 in CI, including PostgreSQL and Flight SQL
 integration tests against service containers; see the badge above for the
-current state.
+current state. `sqlite+adbc` passes SQLAlchemy's dialect compliance suite
+with documented exclusions; see [docs/compliance.md](docs/compliance.md).
 
 ## Development
 

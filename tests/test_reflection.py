@@ -90,10 +90,13 @@ def test_get_columns_type_mapping():
     assert isinstance(by_name["created_at"]["type"], sa.DateTime)
 
 
-def test_get_columns_unknown_table_returns_empty():
+def test_get_columns_unknown_table_raises_no_such_table():
+    # SQLAlchemy's convention (and its SQLite dialect, which sqlite+adbc now
+    # is): an unknown table is NoSuchTableError, not an empty column list.
     engine = _make_engine()
     _seed(engine)
-    assert inspect(engine).get_columns("does_not_exist") == []
+    with pytest.raises(sa.exc.NoSuchTableError):
+        inspect(engine).get_columns("does_not_exist")
 
 
 # ── get_pk_constraint ────────────────────────────────────────────────
@@ -159,7 +162,7 @@ def test_get_indexes_finds_user_index():
     assert "idx_posts_user" in names
     by_name = {i["name"]: i for i in indexes}
     assert by_name["idx_posts_user"]["column_names"] == ["user_id"]
-    assert by_name["idx_posts_user"]["unique"] is False
+    assert not by_name["idx_posts_user"]["unique"]
 
 
 def test_get_indexes_excludes_sqlite_autoindex():
@@ -184,7 +187,7 @@ def test_get_indexes_unique_index_included():
     indexes = inspect(engine).get_indexes("t")
     by_name = {i["name"]: i for i in indexes}
     assert "uq_ab" in by_name
-    assert by_name["uq_ab"]["unique"] is True
+    assert bool(by_name["uq_ab"]["unique"]) is True
     assert by_name["uq_ab"]["column_names"] == ["a", "b"]
 
 
@@ -222,20 +225,6 @@ def test_get_indexes_identifier_escaping():
     by_name = {i["name"]: i for i in indexes}
     assert "idx_order_x" in by_name
     assert by_name["idx_order_x"]["column_names"] == ["x"]
-
-
-def test_sqlite_ident_escaping_unit():
-    """``_sqlite_ident`` wraps in double-quotes and doubles internal ones.
-    Guards against SQL injection at the PRAGMA layer regardless of
-    whether the caller passed a trusted name."""
-    from sqlalchemy_adbc.sqlite import _sqlite_ident
-
-    assert _sqlite_ident("foo") == '"foo"'
-    assert _sqlite_ident("with spaces") == '"with spaces"'
-    assert _sqlite_ident('a"b') == '"a""b"'
-    # The classic "); DROP TABLE -- style payload becomes a single
-    # (harmless) delimited identifier once escaped.
-    assert _sqlite_ident('"; DROP TABLE users; --') == '"""; DROP TABLE users; --"'
 
 
 # ── get_indexes (PG override — structural test, no live DB) ──────────
@@ -364,12 +353,6 @@ def test_metadata_reflect_full_schema():
     assert fk.column.name == "id"
 
 
-@pytest.mark.xfail(
-    _ADBC_SQLITE_VERSION < (1, 13),
-    reason="adbc_driver_sqlite < 1.13 reports xdbc_is_nullable='YES' for "
-    "every column, including NOT NULL ones (fixed upstream in 1.13.0).",
-    strict=True,
-)
 def test_metadata_reflect_column_nullability():
     """NOT NULL constraints round-trip through reflection."""
     engine = _make_engine()
@@ -480,6 +463,31 @@ def test_find_table_skips_indexes():
 # per Inspector keyed on (schema, table_name, depth).
 
 
+# sqlite+adbc now reflects through SQLAlchemy's own SQLite dialect (PRAGMAs),
+# so the GetObjects cache is exercised here on a test-only generic dialect
+# that drives the SQLite driver through ADBCDialect, the path Flight SQL,
+# Snowflake and BigQuery use.
+from sqlalchemy.engine.url import URL  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
+
+from sqlalchemy_adbc.base import ADBCDialect  # noqa: E402
+
+
+class GenericSQLiteOverADBC(ADBCDialect):
+    name = "sqlite_generic"
+    driver_module = "adbc_driver_sqlite.dbapi"
+
+    def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
+        return [], {"uri": url.database or ":memory:"}
+
+
+sa.dialects.registry.register("sqlite_generic.adbc", __name__, "GenericSQLiteOverADBC")
+
+
+def _make_generic_engine():
+    return sa.create_engine("sqlite_generic+adbc:///:memory:", poolclass=StaticPool)
+
+
 @pytest.fixture
 def count_fetches(monkeypatch):
     from sqlalchemy_adbc import reflection
@@ -496,7 +504,7 @@ def count_fetches(monkeypatch):
 
 
 def test_table_autoload_fetches_catalog_once_per_table(count_fetches):
-    engine = _make_engine()
+    engine = _make_generic_engine()
     _seed(engine)
     count_fetches.clear()
     posts = sa.Table("posts", sa.MetaData(), autoload_with=engine)
@@ -507,7 +515,7 @@ def test_table_autoload_fetches_catalog_once_per_table(count_fetches):
 
 
 def test_table_autoload_without_fk_resolution_fetches_once(count_fetches):
-    engine = _make_engine()
+    engine = _make_generic_engine()
     _seed(engine)
     count_fetches.clear()
     sa.Table("posts", sa.MetaData(), autoload_with=engine, resolve_fks=False)
@@ -515,7 +523,7 @@ def test_table_autoload_without_fk_resolution_fetches_once(count_fetches):
 
 
 def test_metadata_reflect_fetches_once_per_table_plus_listing(count_fetches):
-    engine = _make_engine()
+    engine = _make_generic_engine()
     _seed(engine)
     count_fetches.clear()
     md = sa.MetaData()
@@ -526,7 +534,7 @@ def test_metadata_reflect_fetches_once_per_table_plus_listing(count_fetches):
 
 
 def test_cache_keys_distinguish_depth_and_table(count_fetches):
-    engine = _make_engine()
+    engine = _make_generic_engine()
     _seed(engine)
     insp = inspect(engine)
     count_fetches.clear()

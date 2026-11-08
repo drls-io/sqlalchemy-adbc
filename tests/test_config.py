@@ -10,9 +10,6 @@ from sqlalchemy.exc import ArgumentError
 from sqlalchemy_adbc.config import Config, find_config_path, load_config, resolve_env_ref
 
 TOML = """
-[proxy]
-https_proxy = "http://proxy:3128"
-no_proxy = "localhost"
 
 [auth.flight]
 type = "oauth2"
@@ -47,7 +44,7 @@ def test_group_or_world_writable_config_is_rejected(tmp_path):
     with pytest.raises(ArgumentError, match=r"writable"):
         load_config(p)
     p.chmod(0o600)
-    assert load_config(p).proxy["no_proxy"] == "localhost"
+    assert load_config(p).auth_profiles
 
 
 def test_load_parses_sections_and_keeps_env_refs_unresolved(tmp_path):
@@ -55,19 +52,18 @@ def test_load_parses_sections_and_keeps_env_refs_unresolved(tmp_path):
     p.write_text(TOML)
     cfg = load_config(p)
     assert cfg.path == p
-    assert cfg.proxy == {"https_proxy": "http://proxy:3128", "no_proxy": "localhost"}
     assert cfg.auth_profiles == {"flight": {"type": "oauth2", "client_secret": "env:SECRET"}}
 
 
 def test_missing_file_is_empty_config(tmp_path):
-    assert load_config(tmp_path / "nope.toml") == Config({}, {}, None)
+    assert load_config(tmp_path / "nope.toml") == Config({}, None)
     env = {"SQLALCHEMY_ADBC_CONFIG": str(tmp_path / "nope.toml")}
-    assert load_config(None, env=env).proxy == {}
+    assert load_config(None, env=env).auth_profiles == {}
 
 
 def test_malformed_toml_names_path(tmp_path):  # Review Focus 1
     p = tmp_path / "bad.toml"
-    p.write_text("[proxy\nx = ")
+    p.write_text("[auth\nx = ")
     with pytest.raises(ArgumentError, match=str(p)):
         load_config(p)
 
