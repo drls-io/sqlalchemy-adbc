@@ -303,6 +303,10 @@ spellings are removed in the 1.0.0 release itself.
 
 ## Development
 
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the test layers, the live-backend
+variables, what a change needs before it merges, and how to add a server or
+backend. The short version:
+
 ```bash
 git clone https://github.com/drls-io/sqlalchemy-adbc
 cd sqlalchemy-adbc

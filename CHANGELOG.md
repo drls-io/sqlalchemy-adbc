@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Contributor guide.** `CONTRIBUTING.md` (setup, gates, test layers and the
+  live-backend variables, change checklist, adding a server or backend,
+  releases) and issue templates for bug reports and server reports.
+
 ## [0.9.2] — 2026-11-08
 
 Documentation and CI release: the README now leads with Flight SQL and
