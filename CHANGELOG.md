@@ -6,6 +6,13 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **1.0 release-count criterion counts only code releases.** The README now
+  requires two further releases that change code under `src/` without
+  breaking the stable surface; documentation-only and CI-only releases (such
+  as 0.9.2 to 0.9.4) no longer count toward it.
+
 ## [0.9.4] — 2026-11-08
 
 Documentation release: a security policy, the Python floor stated next to

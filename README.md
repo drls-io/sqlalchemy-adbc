@@ -311,8 +311,9 @@ removed in **1.0.0**.
   only), and a compliance or behaviour profile for Flight SQL is documented
   (PostgreSQL's is either run or explicitly ruled out in
   [docs/compliance.md](docs/compliance.md)).
-- At least 60 days have passed since 0.9.0 and at least two further releases
-  have shipped with no breaking change to the stable surface.
+- At least 60 days have passed since 0.9.0, and at least two further releases
+  that change code under `src/` have shipped with no breaking change to the
+  stable surface (documentation-only and CI-only releases do not count).
 - No open bug is filed against the stable surface, and at least three people
   outside the maintainers have reported running it against their own
   servers (an issue using the server-report template counts).
