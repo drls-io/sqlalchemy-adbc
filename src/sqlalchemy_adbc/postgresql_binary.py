@@ -30,6 +30,7 @@ Decoded objects are the same types the typed path yields: SQLAlchemy's
 from __future__ import annotations
 
 import datetime as dt
+import re
 import struct
 from collections.abc import Callable
 from decimal import Decimal
@@ -211,3 +212,60 @@ DECODERS_BY_TYPNAME: dict[str, Decoder] = {
     "hstore": decode_hstore,
 }
 """``pg_type.typname`` → decoder for every family the raw-SQL path decodes."""
+
+
+# ── Decoder selection ──────────────────────────────────────────────────
+
+BUILTIN_RANGE_OIDS: dict[int, str] = {
+    3904: "int4range",
+    3906: "numrange",
+    3908: "tsrange",
+    3910: "tstzrange",
+    3912: "daterange",
+    3926: "int8range",
+    4451: "int4multirange",
+    4532: "nummultirange",
+    4533: "tsmultirange",
+    4534: "tstzmultirange",
+    4535: "datemultirange",
+    4536: "int8multirange",
+}
+"""``pg_type.oid`` of the built-in range and multirange types (fixed across
+PG versions; ``hstore`` is an extension and has a per-database OID)."""
+
+_METADATA_KEYS = (b"POSTGRESQL:type", b"ADBC:postgresql:typname")
+_UNNAMED = re.compile(r"^unnamed<oid:(\d+)>$")
+
+
+def _typname_of(field: Any, hstore_oid: int | None) -> str | None:
+    """The PG type name the driver recorded for an Arrow field, if any.
+
+    The driver names the types it knows (``int4multirange``, ``inet``) and
+    reports the rest as ``unnamed<oid:N>``; the built-in range OIDs are
+    fixed and hstore's is looked up once per connection.
+    """
+    metadata = field.metadata or {}
+    raw = next((metadata[key] for key in _METADATA_KEYS if key in metadata), None)
+    if raw is None:
+        return None
+    name = raw.decode() if isinstance(raw, bytes) else str(raw)
+    match = _UNNAMED.match(name)
+    if match is None:
+        return name
+    oid = int(match.group(1))
+    if hstore_oid is not None and oid == hstore_oid:
+        return "hstore"
+    return BUILTIN_RANGE_OIDS.get(oid)
+
+
+def decoders_for_schema(schema: Any, hstore_oid: int | None) -> list[Decoder | None]:
+    """One decoder (or None) per column of an Arrow result schema.
+
+    Columns the raw-SQL path leaves alone get None; the cursor then passes
+    their ``to_pylist()`` values through untouched.
+    """
+    out: list[Decoder | None] = []
+    for field in schema:
+        name = _typname_of(field, hstore_oid)
+        out.append(DECODERS_BY_TYPNAME.get(name) if name is not None else None)
+    return out

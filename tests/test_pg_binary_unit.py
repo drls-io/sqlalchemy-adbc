@@ -187,3 +187,82 @@ def test_truncated_input_raises_value_error():
         pgb.decode_range(b"\x02\x00\x00\x00\x04\x00", pgb.decode_int4)
     with pytest.raises(ValueError):
         pgb.decode_hstore(b"\x00\x00\x00\x01\x00\x00\x00\x05ab")
+
+
+# ── Task 2: decoder selection from Arrow field metadata ────────────────
+
+import pyarrow as pa  # noqa: E402
+
+HSTORE_BYTES = b"\x00\x00\x00\x00"
+INT4RANGE_BYTES = b"\x02\x00\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x04\x00\x00\x00\n"
+
+
+def _field(name: str, typname: str | None, key: str = "POSTGRESQL:type") -> pa.Field:
+    meta = {key: typname} if typname is not None else None
+    return pa.field(name, pa.binary(), metadata=meta)
+
+
+def test_named_multirange_field_gets_multirange_decoder():
+    schema = pa.schema([_field("mr", "int4multirange")])
+    (dec,) = pgb.decoders_for_schema(schema, hstore_oid=None)
+    assert dec is not None
+    assert dec(b"\x00\x00\x00\x00") == []
+
+
+def test_builtin_range_oid_resolves_without_lookup():
+    schema = pa.schema([_field("r", "unnamed<oid:3904>")])
+    (dec,) = pgb.decoders_for_schema(schema, hstore_oid=None)
+    assert dec is not None and dec(INT4RANGE_BYTES) == Range(1, 10, bounds="[)")
+
+
+def test_every_builtin_oid_is_mapped():
+    expected = {
+        3904: "int4range", 3906: "numrange", 3908: "tsrange", 3910: "tstzrange",
+        3912: "daterange", 3926: "int8range", 4451: "int4multirange",
+        4532: "nummultirange", 4533: "tsmultirange", 4534: "tstzmultirange",
+        4535: "datemultirange", 4536: "int8multirange",
+    }  # fmt: skip
+    assert pgb.BUILTIN_RANGE_OIDS == expected
+
+
+def test_hstore_oid_from_connection_enables_hstore_decoder():
+    schema = pa.schema([_field("h", "unnamed<oid:16390>")])
+    (dec,) = pgb.decoders_for_schema(schema, hstore_oid=16390)
+    assert dec is not None and dec(HSTORE_BYTES) == {}
+
+
+def test_unknown_oid_without_hstore_stays_undecoded():
+    schema = pa.schema([_field("h", "unnamed<oid:16390>")])
+    assert pgb.decoders_for_schema(schema, hstore_oid=None) == [None]
+    assert pgb.decoders_for_schema(schema, hstore_oid=99999) == [None]
+
+
+def test_named_hstore_field_decodes_regardless_of_oid():
+    schema = pa.schema([_field("h", "hstore")])
+    (dec,) = pgb.decoders_for_schema(schema, hstore_oid=None)
+    assert dec is not None and dec(HSTORE_BYTES) == {}
+
+
+def test_plain_and_metadata_free_fields_get_no_decoder():
+    schema = pa.schema(
+        [
+            pa.field("id", pa.int32(), metadata={"POSTGRESQL:type": "int4"}),
+            pa.field("txt", pa.string()),
+            _field("ip", "inet"),
+        ]
+    )
+    assert pgb.decoders_for_schema(schema, hstore_oid=None) == [None, None, None]
+
+
+def test_adbc_typname_key_is_honoured_when_postgresql_type_absent():
+    schema = pa.schema([_field("r", "unnamed<oid:3926>", key="ADBC:postgresql:typname")])
+    (dec,) = pgb.decoders_for_schema(schema, hstore_oid=None)
+    assert dec is not None
+
+
+def test_decoder_list_is_positional():
+    schema = pa.schema(
+        [pa.field("a", pa.int32()), _field("r", "daterange"), pa.field("b", pa.string())]
+    )
+    decs = pgb.decoders_for_schema(schema, hstore_oid=None)
+    assert [d is not None for d in decs] == [False, True, False]
