@@ -1,5 +1,3 @@
+# Blank issues stay open for questions and ideas; Discussions are not enabled
+# on this repository.
 blank_issues_enabled: true
-contact_links:
-  - name: Question or idea
-    url: https://github.com/drls-io/sqlalchemy-adbc/discussions
-    about: Ask how to connect a tool or server, or propose a change before writing code.
