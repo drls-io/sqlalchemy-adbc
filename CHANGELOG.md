@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **1.0 criteria record progress.** The release-count criterion is met
+  (0.9.1 through 0.9.4 shipped with no breaking change); the README now says
+  so and states the date the 60-day clock runs out (2027-01-07).
+
 ## [0.9.4] — 2026-11-08
 
 Documentation release: a security policy, the Python floor stated next to
