@@ -225,13 +225,13 @@ apply to every backend. What differs is SQL compilation and reflection.
 Typed decorators for JSONB / JSON / UUID / INET / CIDR / MACADDR, every range
 and multirange type (`int4range` … `tstzmultirange`) and `hstore`, returning
 SQLAlchemy's own `Range` / `MultiRange` / `dict` with working `@>`, `&&`, `?`
-operators and reflection. Reflection uses `pg_catalog`. Limitation: raw SQL
-readers (`pd.read_sql("SELECT period FROM t", engine)`, SQL Lab) see range and
-hstore values as bytes because plain SQL carries no column type; typed
-columns via Core, ORM or reflection are decoded
-([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11)); raw-SQL
-decoding is tracked in
-[#59](https://github.com/drls-io/sqlalchemy-adbc/issues/59).
+operators and reflection. Reflection uses `pg_catalog`. Raw SQL readers
+(`pd.read_sql("SELECT period FROM t", engine)`, SQL Lab) get the same objects:
+the cursor decodes range and hstore cells from the driver's column metadata
+([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11),
+[#59](https://github.com/drls-io/sqlalchemy-adbc/issues/59)). The Arrow
+helpers return these columns as the driver's opaque binary, since Arrow has
+no range type.
 
 **SQLite** (`sqlite+adbc://`). SQLAlchemy's own SQLite dialect over the ADBC
 connection: its compiler, DDL, types, PRAGMA reflection and `ATTACH` schemas,

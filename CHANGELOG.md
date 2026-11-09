@@ -18,6 +18,16 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   (0.9.1 through 0.9.4 shipped with no breaking change); the README now says
   so and states the date the 60-day clock runs out (2027-01-07).
 
+### Fixed
+
+- **PostgreSQL raw SQL decodes range, multirange and hstore.**
+  `pd.read_sql("SELECT period FROM t", engine)`, Superset's SQL Lab and other
+  plain-SQL readers now get `Range` / `MultiRange` / `dict` instead of bytes,
+  the same objects the typed path returns. The cursor decodes PostgreSQL's
+  binary send format using the driver's per-column type metadata; hstore's
+  OID is looked up once per connection. The Arrow helpers still return these
+  columns as the driver's opaque binary. (#59)
+
 ## [0.9.4] — 2026-11-08
 
 Documentation release: a security policy, the Python floor stated next to

@@ -9,6 +9,7 @@ corrupt the DSN or change its parse. Without quoting, a password like
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, unquote
 
@@ -16,13 +17,28 @@ from sqlalchemy.dialects.postgresql.base import PGTypeCompiler
 from sqlalchemy.engine.interfaces import ReflectedColumn, ReflectedIndex
 from sqlalchemy.engine.url import URL, make_url
 
-from sqlalchemy_adbc.base import ADBCDialect
+from sqlalchemy_adbc.base import ADBCDialect, ADBCExecutionContext, ColumnwiseCursor
+from sqlalchemy_adbc.postgresql_binary import (
+    decoders_for_schema,
+    hstore_oid_for,
+    record_hstore_oid,
+)
 from sqlalchemy_adbc.postgresql_types import pg_ischema_names
 
 # SQLAlchemy 2.0 leaves ``URL.database`` percent-encoded; 2.1 decodes it
 # like userinfo. Probe once so the libpq URI is quoted exactly once on
 # either version.
 _URL_DECODES_DATABASE = make_url("postgresql://h/a%20b").database == "a b"
+
+
+class _PGExecutionContext(ADBCExecutionContext):
+    def create_default_cursor(self) -> Any:
+        raw = self._dbapi_connection
+        hstore_oid = hstore_oid_for(getattr(raw, "dbapi_connection", raw))
+        return ColumnwiseCursor(
+            raw.cursor(),
+            column_decoders=lambda schema: decoders_for_schema(schema, hstore_oid),
+        )
 
 
 class ADBCPostgreSQLDialect(ADBCDialect):
@@ -50,9 +66,19 @@ class ADBCPostgreSQLDialect(ADBCDialect):
     # (``qmark`` at adbc module level) unless we force the kwarg.
     paramstyle = "numeric_dollar"
 
+    # Raw-SQL results: decode range, multirange and hstore cells (PG binary
+    # send format) by the driver's per-column type metadata. Typed columns
+    # already cast to text in SQL and never reach these decoders.
+    execution_ctx_cls = _PGExecutionContext
+
     def __init__(self, **kwargs: Any) -> None:
         kwargs.setdefault("paramstyle", "numeric_dollar")
         super().__init__(**kwargs)
+
+    def on_connect(self) -> Callable[[Any], None] | None:
+        # hstore's OID is per database (it is an extension), so the raw-SQL
+        # decoder learns it once per new DBAPI connection.
+        return record_hstore_oid
 
     def build_connect_args(self, url: URL) -> tuple[list[Any], dict[str, Any]]:
         # Every user-supplied component is reduced to its raw value and

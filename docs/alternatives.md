@@ -74,11 +74,11 @@ Redis's Flight SQL server (see the 0.9.1 notes in the changelog).
 | Reflection | `pg_catalog` | not documented | native |
 | Arrow results | helpers inside the SQLAlchemy transaction | cursor from `driver_connection` | not applicable |
 
-Limitation here: with plain SQL (`pd.read_sql("SELECT period FROM t")`),
-range and hstore values arrive as bytes, because plain SQL carries no column
-type. Typed columns through Core, the ORM or reflection are decoded. Tracked
-in [#59](https://github.com/drls-io/sqlalchemy-adbc/issues/59). If you do not
-need Arrow-native transfer, psycopg is the safer default.
+Range, multirange and hstore values decode to SQLAlchemy's `Range` /
+`MultiRange` / `dict` on both the typed path and plain SQL
+(`pd.read_sql("SELECT period FROM t")`). The Arrow helpers return them as the
+driver's opaque binary, since Arrow has no range type. If you do not need
+Arrow-native transfer, psycopg is the safer default.
 
 ## Other backends
 
