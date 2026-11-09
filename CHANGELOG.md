@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Comparison with alternatives.** `docs/alternatives.md` sets this package
+  beside the other Flight SQL and ADBC options, states what each project
+  documents, and says where another choice fits better.
+
 ### Changed
 
 - **1.0 criteria record progress.** The release-count criterion is met

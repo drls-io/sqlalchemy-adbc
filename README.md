@@ -26,6 +26,9 @@ connection, with the authentication flows (token endpoints, SPNEGO tickets,
 per-connection credentials) handled here so a BI tool or notebook only has to
 hold a URL.
 
+How this compares with the other Flight SQL and ADBC options, including where
+they are the better choice, is in [docs/alternatives.md](docs/alternatives.md).
+
 ## Install
 
 ```bash
@@ -226,7 +229,9 @@ operators and reflection. Reflection uses `pg_catalog`. Limitation: raw SQL
 readers (`pd.read_sql("SELECT period FROM t", engine)`, SQL Lab) see range and
 hstore values as bytes because plain SQL carries no column type; typed
 columns via Core, ORM or reflection are decoded
-([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11)).
+([#11](https://github.com/drls-io/sqlalchemy-adbc/issues/11)); raw-SQL
+decoding is tracked in
+[#59](https://github.com/drls-io/sqlalchemy-adbc/issues/59).
 
 **SQLite** (`sqlite+adbc://`). SQLAlchemy's own SQLite dialect over the ADBC
 connection: its compiler, DDL, types, PRAGMA reflection and `ATTACH` schemas,
