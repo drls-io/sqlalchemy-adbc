@@ -478,3 +478,70 @@ def test_hstore_roundtrip_and_reflection(engine):
         assert isinstance(inspect(engine).get_columns("t_hs")[1]["type"], pgtypes.HSTORE)
     finally:
         _drop_table(engine, "t_hs")
+
+
+# ── Raw-SQL decoding (issue #59) ───────────────────────────────────────
+
+
+def test_raw_sql_decodes_ranges_multiranges_and_hstore(engine):
+    """Plain SQL carries no SQLAlchemy type; the cursor decodes by the
+    driver's column metadata instead and must match the typed path."""
+    _drop_table(engine, "raw59")
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS hstore")
+        conn.exec_driver_sql(
+            'CREATE TABLE "raw59" (id int, r int4range, n numrange, tz tstzrange, '
+            "d daterange, mr int4multirange, h hstore, label text)"
+        )
+        conn.exec_driver_sql(
+            """INSERT INTO "raw59" VALUES
+            (1, '[1,10)', '[1.50,2.5]', '[2024-01-01 00:00+00,2024-02-01 00:00+00)',
+                '[2024-01-01,infinity)', '{[1,3),[5,7)}', 'a=>1,b=>NULL', 'x'),
+            (2, 'empty', '(,)', NULL, NULL, '{}', '', NULL),
+            (3, NULL, NULL, NULL, NULL, NULL, NULL, 'z')"""
+        )
+    try:
+        with engine.connect() as conn:
+            rows = conn.exec_driver_sql('SELECT * FROM "raw59" ORDER BY id').fetchall()
+        assert [tuple(r) for r in rows] == [
+            (
+                1,
+                Range(1, 10, bounds="[)"),
+                Range(Decimal("1.50"), Decimal("2.5"), bounds="[]"),
+                Range(
+                    dt.datetime(2024, 1, 1, tzinfo=UTC),
+                    dt.datetime(2024, 2, 1, tzinfo=UTC),
+                    bounds="[)",
+                ),
+                Range(dt.date(2024, 1, 1), None, bounds="[)"),
+                MultiRange([Range(1, 3, bounds="[)"), Range(5, 7, bounds="[)")]),
+                {"a": "1", "b": None},
+                "x",
+            ),
+            (
+                2,
+                Range(empty=True),
+                Range(None, None, bounds="()"),
+                None,
+                None,
+                MultiRange([]),
+                {},
+                None,
+            ),
+            (3, None, None, None, None, None, None, "z"),
+        ]
+        assert isinstance(rows[0][5], MultiRange)
+
+        # The typed path is unchanged and agrees with the raw path.
+        meta = sa.MetaData()
+        t = sa.Table("raw59", meta, autoload_with=engine)
+        with engine.connect() as conn:
+            typed = conn.execute(sa.select(t.c.r, t.c.h).where(t.c.id == 1)).one()
+        assert tuple(typed) == (Range(1, 10, bounds="[)"), {"a": "1", "b": None})
+
+        pd = pytest.importorskip("pandas")
+        frame = pd.read_sql('SELECT id, r, h FROM "raw59" ORDER BY id', engine)
+        assert frame["r"].tolist()[0] == Range(1, 10, bounds="[)")
+        assert frame["h"].tolist()[0] == {"a": "1", "b": None}
+    finally:
+        _drop_table(engine, "raw59")
