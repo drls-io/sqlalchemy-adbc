@@ -34,7 +34,7 @@ import re
 import struct
 import weakref
 from collections.abc import Callable
-from decimal import Decimal
+from decimal import Context, Decimal
 from typing import Any
 
 from sqlalchemy.dialects.postgresql import MultiRange, Range
@@ -110,18 +110,19 @@ def decode_numeric(data: bytes) -> Decimal:
     if sign == _NUMERIC_NINF:
         return Decimal("-Infinity")
     digits = struct.unpack_from(f">{ndigits}h", data, 8)
-    # Each base-10000 digit d_i has weight 10000**(weight - i); as a Decimal
-    # that is int(digits) * 10**(4 * (weight - ndigits + 1)).
-    magnitude = 0
-    for digit in digits:
-        magnitude = magnitude * 10000 + digit
+    # Each base-10000 digit d_i carries weight 10000**(weight - i), so the
+    # value is the concatenated decimal digits times 10**(4*(weight-ndigits+1)).
+    # Built from a tuple so no context precision applies: PG numerics run to
+    # thousands of digits and Decimal's default context rounds at 28.
+    decimal_digits = tuple(int(c) for d in digits for c in f"{d:04d}") or (0,)
     exponent = 4 * (weight - ndigits + 1) if ndigits else 0
-    value = Decimal(magnitude).scaleb(exponent)
-    if sign == _NUMERIC_NEG:
-        value = -value
-    # PG tracks the display scale separately from the stored digits
-    # ('1.50' is one digit, dscale 2); quantize to reproduce it.
-    return value.quantize(Decimal(1).scaleb(-dscale))
+    value = Decimal((1 if sign == _NUMERIC_NEG else 0, decimal_digits, exponent))
+    # PG tracks the display scale separately from the stored digits ('1.50'
+    # is one base-10000 digit with dscale 2); the digits beyond dscale are
+    # always zero, so quantizing is exact. A context wide enough for every
+    # digit keeps it from raising InvalidOperation on long values.
+    context = Context(prec=len(decimal_digits) + dscale + abs(exponent) + 8)
+    return value.quantize(Decimal(1).scaleb(-dscale), context=context)
 
 
 # ── Containers ─────────────────────────────────────────────────────────
@@ -274,7 +275,16 @@ def decoders_for_schema(schema: Any, hstore_oid: int | None) -> list[Decoder | N
 
 # ── hstore OID per DBAPI connection ────────────────────────────────────
 
-_HSTORE_OID_SQL = "SELECT oid FROM pg_type WHERE typname = 'hstore'"
+# The type that belongs to the hstore *extension*, wherever it is installed
+# (Supabase and friends put extensions in their own schema, so a bare
+# ``'hstore'::regtype`` would miss it, and a bare ``typname = 'hstore'``
+# could pick up an unrelated user type of the same name).
+_HSTORE_OID_SQL = """
+SELECT t.oid
+FROM pg_catalog.pg_type t
+JOIN pg_catalog.pg_extension e ON e.extname = 'hstore'
+WHERE t.typname = 'hstore' AND t.typnamespace = e.extnamespace
+"""
 _hstore_oids: weakref.WeakKeyDictionary[Any, int | None] = weakref.WeakKeyDictionary()
 
 
@@ -282,9 +292,13 @@ def record_hstore_oid(dbapi_connection: Any) -> None:
     """Look up this database's hstore OID once, on a fresh connection.
 
     Run from the dialect's ``on_connect`` hook, before any statement, so it
-    never interleaves with an open result reader. A failure (extension not
-    installed, catalog not readable) records None; range decoding does not
-    depend on it.
+    never interleaves with an open result reader. A failure (catalog not
+    readable, odd server) records None; range decoding does not depend on
+    it. An extension that is not installed simply yields no row.
+
+    ADBC connections run with autocommit off, so a failed SELECT leaves
+    libpq in an aborted transaction; roll back so the user's first statement
+    does not fail with "the connection is in an error state".
     """
     oid: int | None = None
     try:
@@ -298,6 +312,10 @@ def record_hstore_oid(dbapi_connection: Any) -> None:
             oid = int(row[0])
     except Exception:  # noqa: BLE001 - best effort; see docstring
         oid = None
+        try:
+            dbapi_connection.rollback()
+        except Exception:  # noqa: BLE001 - nothing more to do on a dead connection
+            pass
     try:
         _hstore_oids[dbapi_connection] = oid
     except TypeError:  # not weak-referenceable; nothing to remember

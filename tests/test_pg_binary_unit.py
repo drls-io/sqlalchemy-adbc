@@ -7,6 +7,7 @@ Byte strings were captured from PostgreSQL 16 through adbc-driver-postgresql
 from __future__ import annotations
 
 import datetime as dt
+import struct
 from decimal import Decimal
 
 import pytest
@@ -82,6 +83,31 @@ def test_decode_numrange(data, expected):
 def test_decode_numeric_nan():
     data = b"\x00\x00\x00\x00\xc0\x00\x00\x00"
     assert pgb.decode_numeric(data).is_nan()
+
+
+def _numeric_bytes(digits: list[int], weight: int, dscale: int, negative: bool = False) -> bytes:
+    """Build PG's binary numeric: base-10000 digits, most significant first."""
+    sign = 0x4000 if negative else 0
+    return struct.pack(">hhHh", len(digits), weight, sign, dscale) + struct.pack(
+        f">{len(digits)}h", *digits
+    )
+
+
+def test_decode_numeric_beyond_28_significant_digits_is_exact():
+    # Decimal's default context has 28 digits of precision; PG numerics go
+    # far beyond that and the typed path returns them exactly.
+    data = _numeric_bytes([12, 3456, 7890, 1234, 5678, 9012, 3456, 7890], weight=7, dscale=0)
+    assert pgb.decode_numeric(data) == Decimal("123456789012345678901234567890")
+    data = _numeric_bytes([1, 1234, 5678, 9012, 3456, 7890, 1234, 5678, 9000], weight=0, dscale=30)
+    assert str(pgb.decode_numeric(data)) == "1.123456789012345678901234567890"
+
+
+def test_decode_numeric_zero_with_scale_and_negative_weight():
+    assert str(pgb.decode_numeric(_numeric_bytes([], weight=0, dscale=2))) == "0.00"
+    assert pgb.decode_numeric(_numeric_bytes([5], weight=-2, dscale=8)) == Decimal("0.00000005")
+    assert pgb.decode_numeric(_numeric_bytes([5], weight=-2, dscale=8, negative=True)) == Decimal(
+        "-0.00000005"
+    )
 
 
 def test_decode_daterange_infinity_is_unbounded():
@@ -278,7 +304,7 @@ class _FakeCursor:
         self._rows, self._error = rows, error
 
     def execute(self, sql, *a):
-        assert "pg_type" in sql and "hstore" in sql
+        assert "hstore" in sql and "pg_extension" in sql  # tied to the extension's schema
         if self._error:
             raise self._error
 
@@ -292,9 +318,13 @@ class _FakeCursor:
 class _FakeConnection:
     def __init__(self, rows, error=None):
         self._cursor = _FakeCursor(rows, error)
+        self.rollbacks = 0
 
     def cursor(self):
         return self._cursor
+
+    def rollback(self):
+        self.rollbacks += 1
 
 
 def test_on_connect_records_hstore_oid_per_connection():
@@ -313,11 +343,22 @@ def test_on_connect_without_hstore_records_none():
     assert pgb.hstore_oid_for(conn) is None
 
 
-def test_on_connect_query_failure_is_tolerated():
+def test_on_connect_query_failure_is_tolerated_and_rolled_back():
     hook = ADBCPostgreSQLDialect().on_connect()
     conn = _FakeConnection([], error=RuntimeError("permission denied"))
     hook(conn)  # must not raise
     assert pgb.hstore_oid_for(conn) is None
+    # ADBC runs with autocommit off: a failed SELECT leaves libpq in an
+    # aborted transaction and the user's first statement would fail with
+    # "cannot start transaction: the connection is in an error state".
+    assert conn.rollbacks == 1
+
+
+def test_on_connect_success_does_not_roll_back():
+    hook = ADBCPostgreSQLDialect().on_connect()
+    conn = _FakeConnection([(16390,)])
+    hook(conn)
+    assert conn.rollbacks == 0
 
 
 def test_unknown_connection_has_no_hstore_oid():
