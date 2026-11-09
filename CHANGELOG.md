@@ -6,6 +6,17 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Package metadata for discoverability.** The summary names Flight SQL and
+  ADBC together, the keywords cover the common spellings (`flight-sql`,
+  `flightsql`, `arrow-flight-sql`, `sqlalchemy-dialect`, `dbapi`, ...), and
+  the project gains classifiers plus Documentation and Changelog URLs.
+- **1.0 criteria now include a soak period and outside usage.** The README
+  gates 1.0 on 60 days since 0.9.0, two further non-breaking releases, no open
+  bug on the stable surface, three outside reports, and a second Flight SQL
+  server in CI. The stable surface is marked provisional until then.
+
 ## [0.9.2] — 2026-11-08
 
 Documentation and CI release: the README now leads with Flight SQL and

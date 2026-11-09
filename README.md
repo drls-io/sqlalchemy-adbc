@@ -9,7 +9,7 @@
 servers, with the authentication an enterprise deployment needs: OAuth2
 client credentials, Kerberos/Negotiate, bearer tokens, and config profiles
 that keep secrets out of URLs. Any tool that speaks SQLAlchemy (pandas,
-Polars, marimo, Superset, dbt) gets a Flight SQL connection from one URL,
+Polars, marimo, Superset) gets a Flight SQL connection from one URL,
 and an Arrow-native path when it wants Arrow rather than rows.
 
 The same package also drives PostgreSQL, SQLite, Snowflake and BigQuery
@@ -280,7 +280,9 @@ and Snowflake have none.
 
 ### Stability
 
-Stable from 0.9 on, changing only with a major version:
+The surface below has been held stable since 0.9.0 (2026-11-08) and changes
+only with a major version. It is provisional until the 1.0 criteria below are
+met, because it has had little time in other people's hands:
 
 - the `<backend>+adbc://` URL schemes and the query keys documented above;
 - the `auth=` modes and `auth_profile=`;
@@ -295,11 +297,21 @@ anything marked server-dependent above.
 Deprecated: the pre-0.4 `adbc+<backend>://` URL spellings warn today and are
 removed in **1.0.0**.
 
-1.0 ships when all of these hold: Flight SQL, PostgreSQL and SQLite are
-integration-tested in CI and the compliance suite is green on SQLite (done);
-Python 3.12–3.14 × SQLAlchemy 2.0/2.1 are tested (done); one minor release
-after 0.9 lands with no breaking change to the stable surface; the deprecated
-spellings are removed in the 1.0.0 release itself.
+1.0 ships when all of these hold:
+
+- Done: Flight SQL, PostgreSQL and SQLite are integration-tested in CI, the
+  compliance suite is green on SQLite, and Python 3.12–3.14 × SQLAlchemy
+  2.0/2.1 are tested.
+- Flight SQL is tested against at least two different servers (today: GizmoSQL
+  only), and a compliance or behaviour profile for Flight SQL is documented
+  (PostgreSQL's is either run or explicitly ruled out in
+  [docs/compliance.md](docs/compliance.md)).
+- At least 60 days have passed since 0.9.0 and at least two further releases
+  have shipped with no breaking change to the stable surface.
+- No open bug is filed against the stable surface, and at least three people
+  outside the maintainers have reported running it against their own
+  servers (issues or discussions count).
+- The deprecated spellings are removed in the 1.0.0 release itself.
 
 ## Development
 
