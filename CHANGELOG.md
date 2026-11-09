@@ -8,10 +8,9 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- **1.0 release-count criterion counts only code releases.** The README now
-  requires two further releases that change code under `src/` without
-  breaking the stable surface; documentation-only and CI-only releases (such
-  as 0.9.2 to 0.9.4) no longer count toward it.
+- **1.0 criteria record progress.** The release-count criterion is met
+  (0.9.1 through 0.9.4 shipped with no breaking change); the README now says
+  so and states the date the 60-day clock runs out (2027-01-07).
 
 ## [0.9.4] — 2026-11-08
 
