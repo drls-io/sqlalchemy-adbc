@@ -168,8 +168,9 @@ def test_executemany_with_empty_parameter_sets_runs_once_per_set():
 
 # ── Per-result-set column decoders (issue #59) ───────────────────────────
 
-import pyarrow as pa  # noqa: E402
 from typing import Any  # noqa: E402
+
+import pyarrow as pa  # noqa: E402
 
 
 class _FakeArrowCursor:
