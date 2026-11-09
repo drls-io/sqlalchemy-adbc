@@ -6,6 +6,13 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.5] — 2026-11-09
+
+PostgreSQL range, multirange and hstore values now decode on the raw-SQL path
+(pandas `read_sql`, Superset SQL Lab), not only through typed columns. Also a
+comparison page with the other Flight SQL and ADBC options, and the 1.0
+criteria updated to record progress.
+
 ### Added
 
 - **Comparison with alternatives.** `docs/alternatives.md` sets this package
@@ -566,7 +573,8 @@ Initial public release.
   `adbc+<driver>://` URL resolves automatically
 - PyPI trusted publishing via OIDC
 
-[Unreleased]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.1...v0.9.2
