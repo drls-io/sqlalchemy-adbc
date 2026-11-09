@@ -169,6 +169,7 @@ def test_executemany_with_empty_parameter_sets_runs_once_per_set():
 # ── Per-result-set column decoders (issue #59) ───────────────────────────
 
 import pyarrow as pa  # noqa: E402
+from typing import Any  # noqa: E402
 
 
 class _FakeArrowCursor:
@@ -192,12 +193,11 @@ class _FakeArrowCursor:
 
 
 def _opaque_batch() -> pa.RecordBatch:
-    schema = pa.schema(
-        [
-            pa.field("id", pa.int32()),
-            pa.field("blob", pa.binary(), metadata={"kind": "decode-me"}),
-        ]
-    )
+    fields: list[pa.Field[Any]] = [
+        pa.field("id", pa.int32()),
+        pa.field("blob", pa.binary(), metadata={"kind": "decode-me"}),
+    ]
+    schema = pa.schema(fields)
     return pa.RecordBatch.from_arrays(
         [pa.array([1, 2, 3], pa.int32()), pa.array([b"a", None, b"c"], pa.binary())], schema=schema
     )
