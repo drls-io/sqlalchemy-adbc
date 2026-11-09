@@ -6,11 +6,18 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.3] — 2026-11-08
+
+Documentation release: a contributor guide with issue templates, package
+metadata that is easier to find on PyPI, and 1.0 criteria that require a
+soak period and reports from outside users.
+
 ### Added
 
 - **Contributor guide.** `CONTRIBUTING.md` (setup, gates, test layers and the
   live-backend variables, change checklist, adding a server or backend,
   releases) and issue templates for bug reports and server reports.
+
 ### Changed
 
 - **Package metadata for discoverability.** The summary names Flight SQL and
@@ -517,7 +524,8 @@ Initial public release.
   `adbc+<driver>://` URL resolves automatically
 - PyPI trusted publishing via OIDC
 
-[Unreleased]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.8.0...v0.9.0

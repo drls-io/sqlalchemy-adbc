@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sqlalchemy-adbc"
-version = "0.9.2"
+version = "0.9.3"
 description = "SQLAlchemy dialect for Apache Arrow Flight SQL and ADBC, with OAuth2, Kerberos and config profiles. Also PostgreSQL, SQLite, Snowflake and BigQuery."
 readme = "README.md"
 license = { text = "Apache-2.0" }
