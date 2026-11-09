@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.4] — 2026-11-08
+
+Documentation release: a security policy, the Python floor stated next to
+the install commands, and a 1.0 criterion that names the server-report
+issue template.
+
 ### Added
 
 - **Security policy.** `SECURITY.md` explains how to report a vulnerability
@@ -538,7 +544,8 @@ Initial public release.
   `adbc+<driver>://` URL resolves automatically
 - PyPI trusted publishing via OIDC
 
-[Unreleased]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/drls-io/sqlalchemy-adbc/compare/v0.9.0...v0.9.1
