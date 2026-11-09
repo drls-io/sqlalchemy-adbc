@@ -39,6 +39,11 @@ pip install "sqlalchemy-adbc[snowflake]"
 pip install "sqlalchemy-adbc[bigquery]"
 ```
 
+Requires Python 3.12 or newer. On an older interpreter `pip` does not fail: it
+installs the newest release that allows that interpreter (0.6.x on Python 3.11,
+0.5.x on 3.10), which lacks every later fix. Check with
+`pip show sqlalchemy-adbc` if you are unsure which version you got.
+
 ## Quickstart
 
 ```python
@@ -310,7 +315,7 @@ removed in **1.0.0**.
   have shipped with no breaking change to the stable surface.
 - No open bug is filed against the stable surface, and at least three people
   outside the maintainers have reported running it against their own
-  servers (issues or discussions count).
+  servers (an issue using the server-report template counts).
 - The deprecated spellings are removed in the 1.0.0 release itself.
 
 ## Development
