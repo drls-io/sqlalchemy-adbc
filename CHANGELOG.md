@@ -6,6 +6,20 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Security policy.** `SECURITY.md` explains how to report a vulnerability
+  privately (GitHub private vulnerability reporting), which versions get
+  fixes, and what counts as in scope for a package that handles OAuth2
+  secrets, Kerberos tickets and a trusted config file.
+
+### Changed
+
+- **README states the Python floor next to the install commands**, including
+  that `pip` on an older interpreter silently installs an old release.
+- **1.0 criteria no longer mention Discussions**, which are disabled; the
+  server-report issue template is what counts as an outside report.
+
 ## [0.9.3] — 2026-11-08
 
 Documentation release: a contributor guide with issue templates, package
