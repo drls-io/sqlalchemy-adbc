@@ -164,3 +164,76 @@ def test_executemany_with_empty_parameter_sets_runs_once_per_set():
         c.execute(t.insert(), [{}, {}, {}])
         assert c.execute(sa.select(sa.func.count()).select_from(t)).scalar() == 3
     e.dispose()
+
+
+# ── Per-result-set column decoders (issue #59) ───────────────────────────
+
+import pyarrow as pa  # noqa: E402
+
+
+class _FakeArrowCursor:
+    """Stands in for the ADBC cursor: one batch, served as a reader."""
+
+    arraysize = 1
+    rowcount = -1
+    description = None
+
+    def __init__(self, batch: pa.RecordBatch) -> None:
+        self._batch = batch
+
+    def execute(self, operation, parameters=None):
+        return None
+
+    def fetch_record_batch(self):
+        return pa.RecordBatchReader.from_batches(self._batch.schema, [self._batch])
+
+    def close(self):
+        pass
+
+
+def _opaque_batch() -> pa.RecordBatch:
+    schema = pa.schema(
+        [
+            pa.field("id", pa.int32()),
+            pa.field("blob", pa.binary(), metadata={"kind": "decode-me"}),
+        ]
+    )
+    return pa.RecordBatch.from_arrays(
+        [pa.array([1, 2, 3], pa.int32()), pa.array([b"a", None, b"c"], pa.binary())], schema=schema
+    )
+
+
+def _decoders(schema):
+    return [
+        (lambda v: v.decode().upper()) if (f.metadata or {}).get(b"kind") == b"decode-me" else None
+        for f in schema
+    ]
+
+
+def test_column_decoders_apply_per_column_and_skip_none():
+    cur = ColumnwiseCursor(_FakeArrowCursor(_opaque_batch()), column_decoders=_decoders)
+    cur.execute("SELECT ...")
+    assert cur.fetchall() == [(1, "A"), (2, None), (3, "C")]
+
+
+def test_without_column_decoders_values_pass_through():
+    cur = ColumnwiseCursor(_FakeArrowCursor(_opaque_batch()))
+    cur.execute("SELECT ...")
+    assert cur.fetchall() == [(1, b"a"), (2, None), (3, b"c")]
+
+
+def test_column_decoders_called_once_per_result_set():
+    calls = []
+
+    def counting(schema):
+        calls.append(schema)
+        return _decoders(schema)
+
+    cur = ColumnwiseCursor(_FakeArrowCursor(_opaque_batch()), column_decoders=counting)
+    cur.execute("SELECT ...")
+    assert cur.fetchone() == (1, "A")
+    assert cur.fetchmany(5) == [(2, None), (3, "C")]
+    assert len(calls) == 1
+    cur.execute("SELECT ...")  # new result set → consulted again
+    assert cur.fetchall()[0] == (1, "A")
+    assert len(calls) == 2

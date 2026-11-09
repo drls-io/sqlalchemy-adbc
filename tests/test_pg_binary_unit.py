@@ -266,3 +266,94 @@ def test_decoder_list_is_positional():
     )
     decs = pgb.decoders_for_schema(schema, hstore_oid=None)
     assert [d is not None for d in decs] == [False, True, False]
+
+
+# ── Task 3: hstore OID per connection and dialect wiring ─────────────────
+
+from sqlalchemy_adbc.postgresql import ADBCPostgreSQLDialect  # noqa: E402
+
+
+class _FakeCursor:
+    def __init__(self, rows, error=None):
+        self._rows, self._error = rows, error
+
+    def execute(self, sql, *a):
+        assert "pg_type" in sql and "hstore" in sql
+        if self._error:
+            raise self._error
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def close(self):
+        pass
+
+
+class _FakeConnection:
+    def __init__(self, rows, error=None):
+        self._cursor = _FakeCursor(rows, error)
+
+    def cursor(self):
+        return self._cursor
+
+
+def test_on_connect_records_hstore_oid_per_connection():
+    dialect = ADBCPostgreSQLDialect()
+    hook = dialect.on_connect()
+    assert hook is not None
+    conn = _FakeConnection([(16390,)])
+    hook(conn)
+    assert pgb.hstore_oid_for(conn) == 16390
+
+
+def test_on_connect_without_hstore_records_none():
+    hook = ADBCPostgreSQLDialect().on_connect()
+    conn = _FakeConnection([])
+    hook(conn)
+    assert pgb.hstore_oid_for(conn) is None
+
+
+def test_on_connect_query_failure_is_tolerated():
+    hook = ADBCPostgreSQLDialect().on_connect()
+    conn = _FakeConnection([], error=RuntimeError("permission denied"))
+    hook(conn)  # must not raise
+    assert pgb.hstore_oid_for(conn) is None
+
+
+def test_unknown_connection_has_no_hstore_oid():
+    assert pgb.hstore_oid_for(object()) is None
+
+
+def test_pg_dialect_cursor_decodes_opaque_range_columns():
+    from sqlalchemy_adbc.base import ColumnwiseCursor
+
+    dialect = ADBCPostgreSQLDialect()
+    ctx = dialect.execution_ctx_cls.__new__(dialect.execution_ctx_cls)
+    ctx.dialect = dialect
+    schema = pa.schema(
+        [pa.field("r", pa.binary(), metadata={"POSTGRESQL:type": "unnamed<oid:3904>"})]
+    )
+    batch = pa.RecordBatch.from_arrays(
+        [pa.array([INT4RANGE_BYTES, None], pa.binary())], schema=schema
+    )
+
+    class _Cur:
+        arraysize = 1
+
+        def execute(self, *a):
+            pass
+
+        def fetch_record_batch(self):
+            return pa.RecordBatchReader.from_batches(schema, [batch])
+
+    class _DBAPIConn:
+        dbapi_connection = _FakeConnection([])
+
+        def cursor(self):
+            return _Cur()
+
+    ctx._dbapi_connection = _DBAPIConn()
+    cur = ctx.create_default_cursor()
+    assert isinstance(cur, ColumnwiseCursor)
+    cur.execute("SELECT r FROM t")
+    assert cur.fetchall() == [(Range(1, 10, bounds="[)"),), (None,)]

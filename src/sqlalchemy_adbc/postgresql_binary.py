@@ -32,6 +32,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 import struct
+import weakref
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
@@ -269,3 +270,43 @@ def decoders_for_schema(schema: Any, hstore_oid: int | None) -> list[Decoder | N
         name = _typname_of(field, hstore_oid)
         out.append(DECODERS_BY_TYPNAME.get(name) if name is not None else None)
     return out
+
+
+# ── hstore OID per DBAPI connection ────────────────────────────────────
+
+_HSTORE_OID_SQL = "SELECT oid FROM pg_type WHERE typname = 'hstore'"
+_hstore_oids: weakref.WeakKeyDictionary[Any, int | None] = weakref.WeakKeyDictionary()
+
+
+def record_hstore_oid(dbapi_connection: Any) -> None:
+    """Look up this database's hstore OID once, on a fresh connection.
+
+    Run from the dialect's ``on_connect`` hook, before any statement, so it
+    never interleaves with an open result reader. A failure (extension not
+    installed, catalog not readable) records None; range decoding does not
+    depend on it.
+    """
+    oid: int | None = None
+    try:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute(_HSTORE_OID_SQL)
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+        if row is not None and row[0] is not None:
+            oid = int(row[0])
+    except Exception:  # noqa: BLE001 - best effort; see docstring
+        oid = None
+    try:
+        _hstore_oids[dbapi_connection] = oid
+    except TypeError:  # not weak-referenceable; nothing to remember
+        pass
+
+
+def hstore_oid_for(dbapi_connection: Any) -> int | None:
+    """The hstore OID recorded for this connection, or None."""
+    try:
+        return _hstore_oids.get(dbapi_connection)
+    except TypeError:
+        return None

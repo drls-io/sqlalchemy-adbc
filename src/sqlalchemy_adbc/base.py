@@ -45,16 +45,27 @@ class ColumnwiseCursor:
     stays bounded. Everything else is forwarded to the wrapped cursor.
     """
 
-    def __init__(self, cursor: Any) -> None:
+    def __init__(
+        self,
+        cursor: Any,
+        column_decoders: Callable[[Any], Sequence[Callable[[Any], Any] | None]] | None = None,
+    ) -> None:
         self._cursor = cursor
         self._reader: Any = None
         self._rows: collections.deque[tuple[Any, ...]] = collections.deque()
         self._exhausted = False
+        # Dialect hook: given the result's Arrow schema, one decoder (or
+        # None) per column, applied to the Python values of that column.
+        # PostgreSQL uses it to turn the driver's opaque binary range and
+        # hstore cells into ``Range`` / ``dict`` on the raw-SQL path.
+        self._column_decoders = column_decoders
+        self._decoders: Sequence[Callable[[Any], Any] | None] | None = None
 
     def _reset(self) -> None:
         self._reader = None
         self._rows.clear()
         self._exhausted = False
+        self._decoders = None
 
     def execute(self, operation: Any, parameters: Any = None) -> Any:
         self._reset()
@@ -82,6 +93,9 @@ class ColumnwiseCursor:
             return
         if self._reader is None:
             self._reader = self._cursor.fetch_record_batch()
+            if self._column_decoders is not None:
+                decoders = self._column_decoders(self._reader.schema)
+                self._decoders = decoders if any(d is not None for d in decoders) else None
         while want is None or len(self._rows) < want:
             try:
                 batch = self._reader.read_next_batch()
@@ -89,7 +103,16 @@ class ColumnwiseCursor:
                 self._exhausted = True
                 return
             if batch.num_rows:
-                self._rows.extend(zip(*(col.to_pylist() for col in batch.columns), strict=True))
+                self._rows.extend(zip(*self._columns(batch), strict=True))
+
+    def _columns(self, batch: Any) -> list[list[Any]]:
+        columns = [col.to_pylist() for col in batch.columns]
+        if self._decoders is None:
+            return columns
+        for i, decode in enumerate(self._decoders):
+            if decode is not None:
+                columns[i] = [None if v is None else decode(v) for v in columns[i]]
+        return columns
 
     def fetchone(self) -> tuple[Any, ...] | None:
         self._fill(1)
